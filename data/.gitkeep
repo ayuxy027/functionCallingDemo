@@ -1,0 +1,8 @@
+# Data Directory
+
+This directory stores data files for fine-tuning:
+- Raw documents (RBI guidelines, bank procedures)
+- Formatted training data (JSONL format)
+- Validation datasets
+
+Place your data files here before fine-tuning Gemma 4.

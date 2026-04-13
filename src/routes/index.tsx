@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useEffect, useState, useMemo, useCallback } from "react";
-import { ChatGroupBlock, type ChatMessageData, type ChatGroup } from "@/components/chat/ChatMessage";
+import { ChatGroupBlock, type ChatMessageData, type ChatGroup, type ToolStepData } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { mockMessages } from "@/components/chat/mockData";
 import { chatWithOllama, type OllamaMessage } from "@/lib/ollama";
+import { executeAllTools, type ToolResult } from "@/lib/tools";
 import { Sparkles } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -65,7 +66,7 @@ function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isThinking]);
 
-  const handleSend = useCallback(async (text: string) => {
+const handleSend = useCallback(async (text: string) => {
     const userMsg: ChatMessageData = {
       id: crypto.randomUUID(),
       role: "user",
@@ -76,35 +77,53 @@ function ChatPage() {
     setIsThinking(true);
 
     try {
+      const toolStart = performance.now();
+      const toolResults = await executeAllTools(text);
+      const toolDuration = Math.round(performance.now() - toolStart);
+
+      const contextInfo = toolResults
+        .filter(t => t.status === "completed" && t.output !== "No results found")
+        .map(t => `[${t.toolName}] ${t.output}`)
+        .join("\n\n");
+
+      const systemPrompt = contextInfo
+        ? `You are a regulatory compliance assistant. Use the following reference data to answer accurately:\n\n${contextInfo}\n\nIf the reference data answers the question, cite it. Otherwise, say you don't know.`
+        : "";
+
       const currentHistory: OllamaMessage[] = messages
         .slice(-10)
         .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+      
+      if (systemPrompt) {
+        currentHistory.unshift({ role: "system", content: systemPrompt });
+      }
       currentHistory.push({ role: "user", content: text });
 
-      const startTime = performance.now();
+      const llmStart = performance.now();
       const response = await chatWithOllama(currentHistory);
-      const duration = performance.now() - startTime;
+      const llmDuration = Math.round(performance.now() - llmStart);
+      const totalDuration = toolDuration + llmDuration;
 
       const assistantMsg: ChatMessageData = {
         id: crypto.randomUUID(),
         role: "assistant",
         content: response,
         toolSteps: [
+          ...toolResults.map((t): ToolStepData => ({
+            id: crypto.randomUUID(),
+            toolName: t.toolName,
+            status: t.status as "completed" | "failed",
+            description: `Searched data for: ${t.input}`,
+            detail: t.output.slice(0, 200) + (t.output.length > 200 ? "..." : ""),
+            durationMs: t.durationMs,
+          })),
           {
             id: crypto.randomUUID(),
             toolName: "ollama_chat",
             status: "completed",
             description: "Query sent to local Gemma 4 model via Ollama",
-            detail: `{\n  "model": "gemma4:e2b",\n  "tokens": ~${Math.round(response.length / 4)},\n  "latency_ms": ${Math.round(duration)}\n}`,
-            durationMs: Math.round(duration),
-          },
-          {
-            id: crypto.randomUUID(),
-            toolName: "process_query",
-            status: "completed",
-            description: "Analyzed user input and generated response",
-            detail: `{\n  "query": "${text.slice(0, 50)}${text.length > 50 ? "..." : ""}",\n  "model": "gemma4:e2b",\n  "connection": "local"\n}`,
-            durationMs: Math.round(duration * 0.3),
+            detail: `{\n  "model": "gemma4:e2b",\n  "context_used": ${contextInfo ? "yes" : "no"},\n  "latency_ms": ${llmDuration}\n}`,
+            durationMs: llmDuration,
           },
         ],
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
