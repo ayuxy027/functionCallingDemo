@@ -1,0 +1,25 @@
+#!/bin/sh
+
+COMMIT_MSG_FILE=$1
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+VALID_PREFIXES="fix:|feat:|refactor:|docs:|style:|test:|chore:|perf:|ci:|build:|revert:"
+
+if [ "$(echo "$COMMIT_MSG" | wc -l)" -gt 1 ]; then
+    echo "Commit message must be single line (no multiline)"
+    echo "Example: feat: add new feature"
+    exit 1
+fi
+
+if ! echo "$COMMIT_MSG" | grep -qE "^($VALID_PREFIXES)"; then
+    echo "Commit message must start with: $VALID_PREFIXES"
+    echo "Example: feat: add new feature"
+    exit 1
+fi
+
+if [ ${#COMMIT_MSG} -gt 72 ]; then
+    echo "Commit message too long (max 72 chars)"
+    exit 1
+fi
+
+exit 0
