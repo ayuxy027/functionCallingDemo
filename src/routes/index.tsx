@@ -1,14 +1,27 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useEffect, useState, useMemo, useCallback } from "react";
-import { ChatGroupBlock, type ChatMessageData, type ChatGroup, type ToolStepData } from "@/components/chat/ChatMessage";
+import { ChatGroupBlock, ToolAccordion, type ChatMessageData, type ChatGroup, type ToolStepData } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { chatWithOllamaStream, type OllamaMessage } from "@/lib/ollama-stream";
 import { executeAllTools } from "@/lib/tools-client";
-import { Sparkles, Loader2 } from "lucide-react";
+import { Loader2, Command } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   component: ChatPage,
 });
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function pickRandom<T>(options: T[]) {
+  return options[Math.floor(Math.random() * options.length)];
+}
+
+function trimQuery(text: string) {
+  const value = text.trim();
+  return value.length <= 54 ? value : `${value.slice(0, 54)}...`;
+}
 
 function groupMessages(messages: ChatMessageData[]): ChatGroup[] {
   const groups: ChatGroup[] = [];
@@ -53,6 +66,29 @@ function ChatPage() {
   }, [messages, isThinking, cursorThinking]);
 
   const handleSend = useCallback(async (text: string) => {
+    const query = trimQuery(text);
+
+    const planningLines = [
+      `Checking policy corpus for: "${query}"`,
+      `Scanning guidance notes linked to "${query}"`,
+      `Mapping your question to relevant RBI clauses`,
+      `Finding exact rule text before answering`,
+    ];
+
+    const toolRunLines = [
+      (toolName: string) => `Running ${toolName} to fetch direct evidence...`,
+      (toolName: string) => `Evaluating ${toolName} results for grounded context...`,
+      (toolName: string) => `Pulling citation snippets from ${toolName}...`,
+      (toolName: string) => `Cross-checking ${toolName} output with your question...`,
+    ];
+
+    const synthesisLines: Array<(count: number) => string> = [
+      (count: number) => `Synthesizing ${count} tool result${count > 1 ? "s" : ""} into one clear response...`,
+      (count: number) => `Drafting answer from ${count} evidence block${count > 1 ? "s" : ""}...`,
+      (_count: number) => "Finalizing structured response with cited points...",
+      (_count: number) => "Preparing concise answer and compliance notes...",
+    ];
+
     const userMsg: ChatMessageData = {
       id: crypto.randomUUID(),
       role: "user",
@@ -66,23 +102,30 @@ function ChatPage() {
     setCursorThinking("");
 
     try {
-      // Cursor-style thinking
-      setCursorThinking(`Let me search for "${text}"`);
+      setCursorThinking(pickRandom(planningLines));
+      await sleep(280 + Math.round(Math.random() * 320));
 
-      // Execute tools
       const toolResults = await executeAllTools(text);
-      setActiveTools(toolResults.map((t): ToolStepData => ({
+      const currentToolSteps = toolResults.map((t): ToolStepData => ({
         id: crypto.randomUUID(),
         toolName: t.toolName,
         status: t.status,
         description: t.output.split("\n")[0].slice(0, 100),
         detail: t.output,
         durationMs: t.durationMs,
-      })));
+      }));
 
-      setCursorThinking(`Analyzing ${toolResults.length} result(s)...`);
+      setActiveTools([]);
+      for (const step of currentToolSteps) {
+        const line = pickRandom(toolRunLines)(step.toolName);
+        setCursorThinking(line);
+        setActiveTools((prev) => [...prev, step]);
+        await sleep(180 + Math.round(Math.random() * 260));
+      }
 
-      // Build context
+      setCursorThinking(pickRandom(synthesisLines)(toolResults.length));
+      await sleep(220 + Math.round(Math.random() * 260));
+
       const contextInfo = toolResults
         .filter(t => t.status === "completed")
         .map(t => `[${t.toolName}] ${t.output}`)
@@ -101,10 +144,8 @@ function ChatPage() {
       }
       currentHistory.push({ role: "user", content: text });
 
-      // Clear thinking
       setCursorThinking("");
-      
-      // Stream response
+
       let fullContent = "";
       for await (const chunk of chatWithOllamaStream(currentHistory)) {
         fullContent = chunk;
@@ -115,7 +156,7 @@ function ChatPage() {
         id: crypto.randomUUID(),
         role: "assistant",
         content: fullContent,
-        toolSteps: activeTools,
+        toolSteps: currentToolSteps,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setMessages((prev) => [...prev, assistantMsg]);
@@ -148,62 +189,61 @@ function ChatPage() {
 
   return (
     <div className="flex flex-col h-screen bg-background">
-      {/* Header */}
-      <header className="shrink-0 px-6 py-4 flex items-center gap-3 border-b border-border/20">
-        <div className="h-8 w-8 rounded-lg bg-foreground/[0.05] flex items-center justify-center">
-          <Sparkles className="h-4 w-4 text-foreground/40" />
+      <header className="shrink-0 px-6 py-4 flex items-center justify-between border-b border-border/40 bg-card/60 backdrop-blur-xl">
+        <div className="flex items-center gap-3">
+          <div>
+            <h1 className="text-[14px] font-semibold text-foreground">Cognizant Agent</h1>
+            <p className="text-[11px] text-foreground/50">Tool-aware compliance copilot</p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-[14px] font-semibold text-foreground">Agent Chat</h1>
-          <p className="text-[11px] text-foreground/40">AI-powered regulatory assistant</p>
+        <div className="hidden sm:flex items-center gap-2 rounded-full border border-border/50 bg-background/70 px-2.5 py-1">
+          <Command className="h-3 w-3 text-foreground/45" />
+          <span className="text-[11px] text-foreground/50">Cursor-style workflow</span>
         </div>
       </header>
 
-      {/* Main chat */}
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto px-6 py-6">
           {groups.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-[60vh] text-center">
-              <Sparkles className="h-12 w-12 text-foreground/10 mb-4" />
-              <p className="text-[15px] text-foreground/50 mb-2">Start a conversation</p>
-              <p className="text-[12px] text-foreground/30">Ask about regulations, FLDG caps, cooling off period, etc.</p>
+            <div className="flex flex-col items-center justify-center h-[60vh] text-center rounded-3xl border border-border/50 bg-card/70 backdrop-blur-sm px-8">
+              <p className="text-[17px] text-foreground/80 mb-2">Ask anything about lending regulations</p>
+              <p className="text-[12px] text-foreground/45">Try: "What is the FLDG cap?" or "Cooling-off breach checks"</p>
             </div>
           ) : (
             groups.map((group, i) => (
               <div key={group.id}>
-                {i > 0 && <div className="h-px bg-border/10 my-2" />}
+                {i > 0 && <div className="h-px bg-border/20 my-2" />}
                 <ChatGroupBlock group={group} isStreaming={isStreaming && i === groups.length - 1} />
               </div>
             ))
           )}
-          
-          {/* Thinking indicator */}
+
           {isThinking && (
             <>
-              <div className="h-px bg-border/10 my-2" />
+              <div className="h-px bg-border/20 my-2" />
               <div className="flex items-start gap-3 py-4">
-                <div className="h-8 w-8 rounded-full bg-foreground/[0.05] flex items-center justify-center">
-                  <Loader2 className="h-4 w-4 text-foreground/40 animate-spin" />
+                <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Loader2 className="h-4 w-4 text-primary animate-spin" />
                 </div>
                 <div className="flex-1">
                   {cursorThinking && (
-                    <p className="text-[12px] text-foreground/40 mb-2">
+                    <p className="text-[12px] text-foreground/50 mb-2 text-shimmer">
                       {cursorThinking}
                     </p>
                   )}
-                  
-                  {/* Tool results */}
+
                   {activeTools.length > 0 && (
-                    <div className="rounded-lg border border-border/20 overflow-hidden mb-3">
-                      <div className="px-3 py-2 bg-foreground/[0.02] text-[11px] text-foreground/50">
-                        Found {activeTools.length} result{activeTools.length > 1 ? "s" : ""}
-                      </div>
+                    <div className="mb-3">
+                      <ToolAccordion
+                        toolSteps={activeTools}
+                        defaultOpen
+                        title="Tool discovery"
+                      />
                     </div>
                   )}
-                  
-                  {/* Streaming content */}
+
                   {streamingContent && (
-                    <div className="text-[14px] text-foreground/70 leading-relaxed whitespace-pre-wrap">
+                    <div className="text-[14px] text-foreground/75 leading-relaxed whitespace-pre-wrap rounded-xl border border-border/40 bg-card/80 px-4 py-3 shadow-sm">
                       {streamingContent}
                     </div>
                   )}
@@ -215,8 +255,7 @@ function ChatPage() {
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="shrink-0 px-6 py-4 border-t border-border/20">
+      <footer className="shrink-0 px-6 py-4 border-t border-border/40 bg-card/60 backdrop-blur-xl">
         <ChatInput onSend={handleSend} disabled={isThinking} />
       </footer>
     </div>
