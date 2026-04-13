@@ -5,7 +5,7 @@ import { ChatInput } from "@/components/chat/ChatInput";
 import { ReasoningStream, type ReasoningStepData } from "@/components/chat/ReasoningStream";
 import { mockMessages } from "@/components/chat/mockData";
 import { chatWithOllamaStream, type OllamaMessage } from "@/lib/ollama-stream";
-import { executeAllTools } from "@/lib/tools";
+import { executeAllTools } from "@/lib/tools-client";
 import { Sparkles } from "lucide-react";
 
 export const Route = createFileRoute("/")({

@@ -17,30 +17,26 @@ const typeConfig = {
   thinking: {
     icon: Brain,
     label: "Reasoning",
-    bg: "bg-blue-500/10",
-    border: "border-blue-500/20",
-    dot: "bg-blue-500",
+    bg: "bg-foreground/[0.03]",
+    border: "border-border/30",
   },
   tool_use: {
     icon: Search,
     label: "Tool Call",
-    bg: "bg-amber-500/10",
-    border: "border-amber-500/20",
-    dot: "bg-amber-500",
+    bg: "bg-foreground/[0.05]",
+    border: "border-border/40",
   },
   tool_result: {
     icon: FileText,
     label: "Result",
-    bg: "bg-emerald-500/10",
-    border: "border-emerald-500/20",
-    dot: "bg-emerald-500",
+    bg: "bg-foreground/[0.04]",
+    border: "border-border/35",
   },
   responding: {
     icon: Sparkles,
     label: "Response",
-    bg: "bg-purple-500/10",
-    border: "border-purple-500/20",
-    dot: "bg-purple-500",
+    bg: "bg-foreground/[0.03]",
+    border: "border-border/30",
   },
 };
 
@@ -81,15 +77,15 @@ export function ReasoningStream({ steps }: ReasoningStreamProps) {
                 {isRunning ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground mt-0.5" />
                 ) : step.status === "completed" ? (
-                  <Check className="h-3.5 w-3.5 text-emerald-500 mt-0.5" />
+                  <Check className="h-3.5 w-3.5 text-foreground mt-0.5" />
                 ) : step.status === "failed" ? (
-                  <X className="h-3.5 w-3.5 text-red-500 mt-0.5" />
+                  <X className="h-3.5 w-3.5 text-foreground mt-0.5" />
                 ) : (
                   <Icon className="h-3.5 w-3.5 text-muted-foreground mt-0.5" />
                 )}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className={cn("text-[10px] font-medium", config.dot.replace("bg-", "text-"))}>
+                    <span className="text-[10px] font-medium text-foreground/80">
                       {config.label}
                     </span>
                     {step.toolName && (
