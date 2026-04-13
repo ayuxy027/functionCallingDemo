@@ -13,7 +13,7 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = "24px";
-      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 140) + "px";
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 120) + "px";
     }
   }, [value]);
 
@@ -26,8 +26,8 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="w-full max-w-[680px] mx-auto animate-slide-up-fade">
-      <div className="flex items-end gap-3 rounded-2xl border border-border/40 bg-surface-elevated px-5 py-3.5 transition-all duration-300 focus-within:border-foreground/10 focus-within:shadow-[0_0_0_4px_oklch(0.5_0.01_260_/_0.04)]">
+    <form onSubmit={handleSubmit} className="w-full max-w-[680px] mx-auto">
+      <div className="flex items-end gap-3 rounded-2xl border border-border/50 bg-card px-4 py-3 transition-all duration-200 focus-within:border-foreground/15 focus-within:shadow-[0_0_0_3px_rgba(0,0,0,0.03)]">
         <textarea
           ref={textareaRef}
           value={value}
@@ -41,18 +41,18 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
           placeholder="Ask something…"
           rows={1}
           disabled={disabled}
-          className="flex-1 resize-none bg-transparent text-[14px] text-foreground placeholder:text-muted-foreground/35 outline-none min-h-[24px] max-h-[140px] leading-relaxed tracking-[-0.01em]"
+          className="flex-1 resize-none bg-transparent text-[13px] text-foreground placeholder:text-muted-foreground/40 outline-none min-h-[24px] max-h-[120px] leading-relaxed"
         />
         <button
           type="submit"
           disabled={!value.trim() || disabled}
-          className="shrink-0 h-8 w-8 rounded-xl bg-foreground text-background flex items-center justify-center transition-all duration-200 disabled:opacity-10 hover:opacity-75 active:scale-90"
+          className="shrink-0 h-7 w-7 rounded-lg bg-foreground text-background flex items-center justify-center transition-all duration-150 disabled:opacity-15 hover:opacity-80 active:scale-95"
         >
           <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.5} />
         </button>
       </div>
-      <p className="text-center text-[10px] text-muted-foreground/25 mt-3 tracking-wide">
-        Mock responses — AI not connected
+      <p className="text-center text-[10px] text-muted-foreground/35 mt-2.5">
+        Mock responses only — AI not connected
       </p>
     </form>
   );
