@@ -32,6 +32,29 @@ function trimQuery(text: string) {
   return value.length <= 54 ? value : `${value.slice(0, 54)}...`;
 }
 
+function summarizeForThinking(text: string) {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (!cleaned) return "No matching evidence yet.";
+
+  const compact = cleaned
+    .replace(/\[[^\]]+\]/g, "")
+    .replace(/[\n\r]+/g, " ")
+    .replace(/\s+/g, " ");
+
+  const snippets = compact
+    .split("→")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((item) => (item.length > 110 ? `${item.slice(0, 110)}...` : item));
+
+  if (snippets.length === 0) {
+    return compact.length > 120 ? `${compact.slice(0, 120)}...` : compact;
+  }
+
+  return snippets.join(" | ");
+}
+
 function groupMessages(messages: ChatMessageData[]): ChatGroup[] {
   const groups: ChatGroup[] = [];
   let i = 0;
@@ -124,7 +147,7 @@ function ChatPage() {
         id: crypto.randomUUID(),
         toolName: t.toolName,
         status: t.status,
-        description: t.output.split("\n")[0].slice(0, 100),
+        description: summarizeForThinking(t.output),
         detail: t.output,
         durationMs: t.durationMs,
       }));
@@ -137,6 +160,10 @@ function ChatPage() {
         setCursorThinking(line);
         setActiveTools((prev) => [...prev, step]);
         await sleep(180 + Math.round(Math.random() * 260));
+
+        const seenLine = `Observed: ${step.description}`;
+        setCursorThinking(seenLine);
+        await sleep(180 + Math.round(Math.random() * 240));
       }
 
       const synthesisOptions = synthesisLines.map((lineFactory) => lineFactory(toolResults.length));

@@ -60,30 +60,28 @@ export function ToolAccordion({
   if (!toolSteps || toolSteps.length === 0) return null;
 
   return (
-    <div className="rounded-xl border border-border/50 overflow-hidden bg-card/80">
+    <div className="space-y-2">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between px-3 py-2.5 bg-muted/40 hover:bg-muted/70 transition-colors text-left"
+        className="inline-flex max-w-full items-center gap-2 rounded-full border border-border/60 bg-muted/50 px-3 py-1.5 text-left hover:bg-muted/70 transition-colors"
       >
-        <div className="flex items-center gap-2">
-          {isOpen ? (
-            <ChevronDown className="h-3 w-3 text-foreground/50" />
-          ) : (
-            <ChevronRight className="h-3 w-3 text-foreground/50" />
-          )}
-          <span className="text-[11px] font-medium text-foreground/70">
-            {title ?? `Used ${toolSteps.length} tool${toolSteps.length > 1 ? "s" : ""}`}
-          </span>
-          <span className="text-[10px] text-foreground/40 font-mono truncate max-w-[220px] text-left">
-            {toolSteps.map((t) => t.toolName).join(", ")}
-          </span>
-        </div>
-        <span className="text-[10px] text-foreground/30">
+        {isOpen ? (
+          <ChevronDown className="h-3 w-3 text-foreground/50" />
+        ) : (
+          <ChevronRight className="h-3 w-3 text-foreground/50" />
+        )}
+        <span className="text-[11px] font-medium text-foreground/70">
+          {title ?? `Used ${toolSteps.length} tool${toolSteps.length > 1 ? "s" : ""}`}
+        </span>
+        <span className="text-[10px] text-foreground/45 font-mono truncate max-w-[220px]">
+          {toolSteps.map((t) => t.toolName).join(", ")}
+        </span>
+        <span className="text-[10px] text-foreground/35">
           {toolSteps.reduce((sum, t) => sum + (t.durationMs || 0), 0)}ms
         </span>
       </button>
       {isOpen && (
-        <div className="border-t border-border/40">
+        <div className="rounded-xl border border-border/50 overflow-hidden bg-card/80">
           {toolSteps.map((tool, i) => (
             <div
               key={i}
@@ -99,8 +97,8 @@ export function ToolAccordion({
                 {tool.description}
               </div>
               {tool.detail && (
-                <pre className="mt-2 rounded-md border border-border/50 bg-background/80 p-2 text-[10px] text-foreground/60 whitespace-pre-wrap">
-                  {tool.detail}
+                <pre className="mt-2 rounded-md border border-border/50 bg-background/80 p-2 text-[10px] text-foreground/60 whitespace-pre-wrap max-h-36 overflow-y-auto">
+                  {tool.detail.length > 520 ? `${tool.detail.slice(0, 520)}...` : tool.detail}
                 </pre>
               )}
             </div>
