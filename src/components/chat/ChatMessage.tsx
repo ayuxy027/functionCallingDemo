@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { User, Sparkles, Search, Check } from "lucide-react";
+import { User, Sparkles, Search } from "lucide-react";
 
 export interface ToolStepData {
   id: string;
@@ -64,18 +64,18 @@ export function ChatGroupBlock({ group }: { group: ChatGroup }) {
         <div className="flex items-start gap-3 pb-2">
           <Avatar role="assistant" />
           <div className="min-w-0 flex-1 space-y-2 pt-0.5">
-            {/* Tool usage inline */}
+            {/* Tools used - simple inline */}
             {group.assistantMessage.toolSteps && group.assistantMessage.toolSteps.length > 0 && (
-              <div className="flex items-center gap-2 text-[10px] text-foreground/50">
+              <div className="flex items-center gap-1.5 text-[10px] text-foreground/40">
                 <Search className="h-2.5 w-2.5" />
-                <span className="font-medium">Using [{group.assistantMessage.toolSteps[0]?.toolName}]</span>
-                <span className="text-foreground/30">•</span>
-                <span>{group.assistantMessage.toolSteps[0]?.description}</span>
+                <span className="font-mono">
+                  {group.assistantMessage.toolSteps.map(t => t.toolName).join(", ")}
+                </span>
               </div>
             )}
 
-            {/* Response text */}
-            <p className="text-[13px] text-foreground/85 leading-[1.7]">
+            {/* Content */}
+            <p className="text-[13px] text-foreground/85 leading-[1.7] whitespace-pre-wrap">
               {group.assistantMessage.content}
             </p>
           </div>

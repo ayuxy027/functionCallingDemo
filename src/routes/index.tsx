@@ -2,10 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import { ChatGroupBlock, type ChatMessageData, type ChatGroup, type ToolStepData } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
-import { mockMessages } from "@/components/chat/mockData";
 import { chatWithOllamaStream, type OllamaMessage } from "@/lib/ollama-stream";
 import { executeAllTools } from "@/lib/tools-client";
-import { Sparkles, Search, Check } from "lucide-react";
+import { Sparkles, Search, Check, FileText, Loader2 } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   component: ChatPage,
@@ -40,17 +39,18 @@ function groupMessages(messages: ChatMessageData[]): ChatGroup[] {
 }
 
 function ChatPage() {
-  const [messages, setMessages] = useState<ChatMessageData[]>(mockMessages);
+  const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [isThinking, setIsThinking] = useState(false);
   const [activeTools, setActiveTools] = useState<ToolStepData[]>([]);
   const [streamingContent, setStreamingContent] = useState("");
+  const [cursorThinking, setCursorThinking] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const groups = useMemo(() => groupMessages(messages), [messages]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isThinking, activeTools]);
+  }, [messages, isThinking, activeTools, cursorThinking]);
 
   const handleSend = useCallback(async (text: string) => {
     const userMsg: ChatMessageData = {
@@ -63,19 +63,29 @@ function ChatPage() {
     setIsThinking(true);
     setActiveTools([]);
     setStreamingContent("");
+    setCursorThinking("");
 
     try {
-      // Execute tools - results shown inline as they complete
+      // Cursor-like thinking: show what we're about to do
+      setCursorThinking(`Let me search for relevant rules about "${text}"...`);
+
+      // Execute tools
       const toolResults = await executeAllTools(text);
+      
+      // Show what we found
+      setCursorThinking(`Found ${toolResults.length} relevant rule(s). Let me analyze...`);
       setActiveTools(toolResults.map((t): ToolStepData => ({
         id: crypto.randomUUID(),
         toolName: t.toolName,
         status: t.status,
-        description: `Found: ${t.input}`,
+        description: t.output.split("\n")[0].slice(0, 80),
         detail: t.output,
         durationMs: t.durationMs,
       })));
 
+      // Clear the "thinking" text and start streaming
+      setCursorThinking("");
+      
       // Build context from tool results
       const contextInfo = toolResults
         .filter(t => t.status === "completed")
@@ -95,14 +105,13 @@ function ChatPage() {
       }
       currentHistory.push({ role: "user", content: text });
 
-      // Stream response directly into message bubble
+      // Stream response
       let fullContent = "";
       for await (const chunk of chatWithOllamaStream(currentHistory)) {
         fullContent = chunk;
         setStreamingContent(fullContent);
       }
 
-      // Save complete message with tools inline
       const assistantMsg: ChatMessageData = {
         id: crypto.randomUUID(),
         role: "assistant",
@@ -114,15 +123,16 @@ function ChatPage() {
       setStreamingContent("");
       setActiveTools([]);
     } catch (error) {
+      setCursorThinking("");
       const assistantMsg: ChatMessageData = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: `Error: ${error instanceof Error ? error.message : "Unknown error"}. Make sure Ollama is running on port 11434.`,
+        content: `Error: ${error instanceof Error ? error.message : "Unknown error"}. Make sure Ollama is running.`,
         toolSteps: [{
           id: crypto.randomUUID(),
           toolName: "error",
           status: "failed",
-          description: "Failed to process",
+          description: "Connection failed",
           detail: "{}",
           durationMs: 0,
         }],
@@ -131,7 +141,7 @@ function ChatPage() {
       setMessages((prev) => [...prev, assistantMsg]);
     } finally {
       setIsThinking(false);
-      setStreamingContent("");
+      setCursorThinking("");
     }
   }, [messages]);
 
@@ -143,7 +153,7 @@ function ChatPage() {
         </div>
         <div>
           <h1 className="text-[13px] font-semibold text-foreground tracking-tight leading-none">Agent Chat</h1>
-          <p className="text-[11px] text-muted-foreground/60 mt-0.5">Tool-powered AI Assistant</p>
+          <p className="text-[11px] text-muted-foreground/60 mt-0.5">Cursor-like AI Assistant</p>
         </div>
       </header>
 
@@ -151,12 +161,20 @@ function ChatPage() {
 
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-[720px] mx-auto px-6 py-4">
-          {groups.map((group, i) => (
-            <div key={group.id}>
-              {i > 0 && <div className="h-px bg-border/30 my-2" />}
-              <ChatGroupBlock group={group} />
+          {groups.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full py-20 text-center">
+              <Sparkles className="h-8 w-8 text-foreground/20 mb-4" />
+              <p className="text-[14px] text-foreground/60 mb-2">Start a conversation</p>
+              <p className="text-[12px] text-foreground/40">Ask about regulations, cooling off period, FLDG caps, etc.</p>
             </div>
-          ))}
+          ) : (
+            groups.map((group, i) => (
+              <div key={group.id}>
+                {i > 0 && <div className="h-px bg-border/30 my-2" />}
+                <ChatGroupBlock group={group} />
+              </div>
+            ))
+          )}
           
           {isThinking && (
             <>
@@ -166,20 +184,31 @@ function ChatPage() {
                   <Sparkles className="h-3.5 w-3.5 text-foreground/40" />
                 </div>
                 <div className="flex-1">
+                  {/* Cursor-style thinking */}
+                  {cursorThinking && (
+                    <div className="flex items-center gap-2 text-[12px] text-foreground/60 mb-3">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      <span>{cursorThinking}</span>
+                    </div>
+                  )}
+                  
+                  {/* Tool results inline */}
                   {activeTools.length > 0 && (
                     <div className="mb-3 p-3 rounded-lg border border-border/40 bg-foreground/[0.03]">
                       <div className="flex items-center gap-2 mb-2">
-                        <Search className="h-3 w-3 text-foreground/50" />
-                        <span className="text-[11px] text-foreground/60">Using tools</span>
+                        <FileText className="h-3 w-3 text-foreground/50" />
+                        <span className="text-[11px] text-foreground/60 font-medium">Search Results</span>
                         <Check className="h-3 w-3 text-foreground/40 ml-auto" />
                       </div>
                       {activeTools.map((tool, i) => (
-                        <div key={i} className="text-[10px] text-foreground/50 font-mono">
-                          [{tool.toolName}] {tool.description}
+                        <div key={i} className="text-[11px] text-foreground/70 font-mono leading-relaxed">
+                          {tool.description}
                         </div>
                       ))}
                     </div>
                   )}
+                  
+                  {/* Streaming response */}
                   {streamingContent && (
                     <p className="text-[13px] text-foreground/85 leading-[1.7]">
                       {streamingContent}
@@ -190,7 +219,8 @@ function ChatPage() {
                       </span>
                     </p>
                   )}
-                  {!streamingContent && activeTools.length === 0 && (
+                  
+                  {!streamingContent && !cursorThinking && (
                     <div className="flex items-center gap-2">
                       <span className="h-1.5 w-1.5 rounded-full bg-foreground/20 animate-[pulse_1.4s_ease-in-out_infinite]" />
                       <span className="h-1.5 w-1.5 rounded-full bg-foreground/20 animate-[pulse_1.4s_ease-in-out_0.2s_infinite]" />
