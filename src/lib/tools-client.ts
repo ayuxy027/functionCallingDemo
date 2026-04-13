@@ -9,6 +9,15 @@ export interface ToolResult {
   source: string;
 }
 
+function normalizeText(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function shortText(value: string, max = 180) {
+  const normalized = normalizeText(value);
+  return normalized.length > max ? `${normalized.slice(0, max)}...` : normalized;
+}
+
 const DATA_INDEX: Record<string, { instruction: string; output: string }[]> = {
   "DigitalLendingGuidelines": [
     { instruction: "FLDG cap", output: "Under DLG 2.0, First Loss Default Guarantee (FLDG) is capped at 5% of the portfolio. Must be maintained as 'Hard Security' (Cash, FD with lien, or Bank Guarantee)." },
@@ -104,6 +113,7 @@ function lookupIndex(keyword: string): ToolResult[] {
 export async function search(query: string): Promise<ToolResult> {
   const start = performance.now();
   const results = searchIndex(query);
+  const durationMs = Math.max(1, Math.round(performance.now() - start));
 
   return {
     toolName: "search",
@@ -112,7 +122,7 @@ export async function search(query: string): Promise<ToolResult> {
     output: results.length > 0 
       ? results.map(r => `[${r.source}] ${r.input}\n→ ${r.output}`).join("\n\n")
       : "No results found",
-    durationMs: Math.round(performance.now() - start),
+    durationMs,
     source: "data/",
   };
 }
@@ -120,6 +130,7 @@ export async function search(query: string): Promise<ToolResult> {
 export async function lookup(keyword: string): Promise<ToolResult> {
   const start = performance.now();
   const results = lookupIndex(keyword);
+  const durationMs = Math.max(1, Math.round(performance.now() - start));
 
   return {
     toolName: "lookup",
@@ -128,7 +139,7 @@ export async function lookup(keyword: string): Promise<ToolResult> {
     output: results.length > 0
       ? results.map(r => `[${r.source}] ${r.input}\n→ ${r.output}`).join("\n\n")
       : `No matching rules found for "${keyword}"`,
-    durationMs: Math.round(performance.now() - start),
+    durationMs,
     source: "data/",
   };
 }
@@ -163,4 +174,65 @@ export async function executeAllTools(query: string): Promise<ToolResult[]> {
   }
 
   return results;
+}
+
+export async function reflect(query: string, result: ToolResult): Promise<ToolResult> {
+  const start = performance.now();
+  const queryKeywords = query.toLowerCase().split(/\s+/).filter((word) => word.length > 2);
+  const resultText = `${result.input} ${result.output}`.toLowerCase();
+  const overlap = queryKeywords.filter((word) => resultText.includes(word)).length;
+  const confidence = queryKeywords.length === 0
+    ? "medium"
+    : overlap >= Math.max(1, Math.floor(queryKeywords.length / 3))
+      ? "high"
+      : "medium";
+
+  const output = [
+    `Tool checked: ${result.toolName}`,
+    `Confidence: ${confidence}`,
+    `Reason: ${shortText(result.output, 140)}`,
+  ].join("\n");
+
+  return {
+    toolName: "reflect",
+    status: "completed",
+    input: result.toolName,
+    output,
+    durationMs: Math.max(1, Math.round(performance.now() - start)),
+    source: "reasoning",
+  };
+}
+
+export async function summarize(query: string, results: ToolResult[]): Promise<ToolResult> {
+  const start = performance.now();
+  const uniqueEvidence = Array.from(new Map(results.map((item) => [`${item.toolName}|${item.output}`, item])).values());
+
+  if (uniqueEvidence.length === 0) {
+    return {
+      toolName: "summarize",
+      status: "failed",
+      input: query,
+      output: "No evidence available to summarize.",
+      durationMs: Math.max(1, Math.round(performance.now() - start)),
+      source: "reasoning",
+    };
+  }
+
+  const summaryLines = uniqueEvidence.slice(0, 4).map((item, index) => {
+    return `${index + 1}. ${shortText(item.output, 130)}`;
+  });
+
+  const output = [
+    "Final synthesis notes:",
+    ...summaryLines,
+  ].join("\n");
+
+  return {
+    toolName: "summarize",
+    status: "completed",
+    input: query,
+    output,
+    durationMs: Math.max(1, Math.round(performance.now() - start)),
+    source: "reasoning",
+  };
 }

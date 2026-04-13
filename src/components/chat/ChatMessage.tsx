@@ -18,6 +18,8 @@ export interface ChatMessageData {
   role: "user" | "assistant";
   content: string;
   toolSteps?: ToolStepData[];
+  reasoningSteps?: ToolStepData[];
+  thinkingSteps?: ToolStepData[];
   timestamp: string;
 }
 
@@ -73,9 +75,11 @@ export function ToolAccordion({
         <span className="text-[11px] font-medium text-foreground/70">
           {title ?? `Used ${toolSteps.length} tool${toolSteps.length > 1 ? "s" : ""}`}
         </span>
-        <span className="text-[10px] text-foreground/45 font-mono truncate max-w-[220px]">
-          {toolSteps.map((t) => t.toolName).join(", ")}
-        </span>
+        {!title && (
+          <span className="text-[10px] text-foreground/45 font-mono truncate max-w-[220px]">
+            {toolSteps.map((t) => t.toolName).join(", ")}
+          </span>
+        )}
         <span className="text-[10px] text-foreground/35">
           {toolSteps.reduce((sum, t) => sum + (t.durationMs || 0), 0)}ms
         </span>
@@ -96,7 +100,7 @@ export function ToolAccordion({
               <div className="text-foreground/70 leading-relaxed">
                 {tool.description}
               </div>
-              {tool.detail && (
+              {tool.detail && tool.detail.trim() !== tool.description.trim() && (
                 <pre className="mt-2 rounded-md border border-border/50 bg-background/80 p-2 text-[10px] text-foreground/60 whitespace-pre-wrap max-h-36 overflow-y-auto">
                   {tool.detail.length > 520 ? `${tool.detail.slice(0, 520)}...` : tool.detail}
                 </pre>
@@ -131,6 +135,9 @@ function MarkdownContent({ content }: { content: string }) {
 }
 
 export function ChatGroupBlock({ group, isStreaming = false }: { group: ChatGroup; isStreaming?: boolean }) {
+  const hasReasoning = Boolean(group.assistantMessage?.reasoningSteps && group.assistantMessage.reasoningSteps.length > 0);
+  const showReasoning = hasReasoning && group.assistantMessage?.toolSteps && group.assistantMessage.toolSteps.length > 0;
+
   return (
     <div className="animate-fade-in">
       {/* User message */}
@@ -151,8 +158,9 @@ export function ChatGroupBlock({ group, isStreaming = false }: { group: ChatGrou
         <div className="flex items-start gap-3 pb-4">
           <Avatar role="assistant" />
           <div className="flex-1 min-w-0 space-y-2">
-            {/* Tool accordion */}
-            <ToolAccordion toolSteps={group.assistantMessage.toolSteps} />
+            <ToolAccordion toolSteps={group.assistantMessage.thinkingSteps} title="Thinking" />
+            <ToolAccordion toolSteps={group.assistantMessage.toolSteps} title="Tool discovery" />
+            {showReasoning && <ToolAccordion toolSteps={group.assistantMessage.reasoningSteps} title="Reasoning" />}
 
             {/* Response with markdown */}
             <div className="text-[14px] text-foreground/80 leading-relaxed">

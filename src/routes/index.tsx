@@ -2,13 +2,20 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import { ChatGroupBlock, ToolAccordion, type ChatMessageData, type ChatGroup, type ToolStepData } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
-import { chatWithOllamaStream, type OllamaMessage } from "@/lib/ollama-stream";
-import { executeAllTools } from "@/lib/tools-client";
+import { chatWithOllama, chatWithOllamaStream, OLLAMA_MODELS, type OllamaMessage } from "@/lib/ollama-stream";
+import { executeAllTools, reflect, summarize, type ToolResult } from "@/lib/tools-client";
 import { Loader2, Command } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   component: ChatPage,
 });
+
+const TOOL_CATALOG = [
+  "search(query): broad semantic retrieval from regulatory knowledge base",
+  "lookup(keyword): focused retrieval for exact policy terms",
+  "reflect(result): quality-check each tool output for query fit",
+  "summarize(results): final evidence digest before response synthesis",
+].join("\n");
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -55,6 +62,131 @@ function summarizeForThinking(text: string) {
   return snippets.join(" | ");
 }
 
+function dedupeToolResults(results: ToolResult[]) {
+  const map = new Map<string, ToolResult>();
+  for (const result of results) {
+    const key = `${result.toolName}|${result.output}`;
+    if (!map.has(key)) {
+      map.set(key, result);
+    }
+  }
+  return Array.from(map.values());
+}
+
+function summarizeEvidence(results: ToolResult[]) {
+  return dedupeToolResults(results)
+    .slice(0, 6)
+    .map((item) => `[${item.toolName}] ${summarizeForThinking(item.output)}`)
+    .join("\n");
+}
+
+function parseReflectionFocus(text: string) {
+  const normalized = text.trim();
+  if (!normalized) return null;
+
+  if (/\bstop\b/i.test(normalized) || /\benough\b/i.test(normalized)) {
+    return null;
+  }
+
+  const firstLine = normalized
+    .split("\n")
+    .map((line) => line.replace(/^[-*\d.)\s]+/, "").trim())
+    .find(Boolean);
+
+  if (!firstLine) return null;
+  return firstLine.length > 70 ? `${firstLine.slice(0, 70)}...` : firstLine;
+}
+
+function parseToolDecision(text: string) {
+  const cleaned = text.trim();
+  const isTool = /^tool\s*:/i.test(cleaned);
+  const thought = cleaned
+    .replace(/^(tool|direct)\s*:/i, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean);
+  return {
+    useTools: isTool,
+    thought: thought || (isTool ? "I should gather evidence before answering." : "A direct conversational reply is enough."),
+  };
+}
+
+function isCasualMessage(text: string) {
+  const query = text.trim();
+  return /^(hi|hello|hey|yo|sup|thanks|thank you|ok|okay)[!.\s]*$/i.test(query)
+    || /\bhow are you\b/i.test(query);
+}
+
+function detectPreferredLanguage(text: string) {
+  if (/\b(hindi|hinglish|tamil|telugu|kannada|malayalam|marathi|bengali)\b/i.test(text)) {
+    return "the same language the user used";
+  }
+  return "English";
+}
+
+function latestReasoningLine(thinking: string) {
+  return thinking
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1) ?? "Thinking through the response...";
+}
+
+function buildSystemPrompt({
+  preferredLanguage,
+  contextInfo,
+  forceToolGrounding,
+}: {
+  preferredLanguage: string;
+  contextInfo: string;
+  forceToolGrounding: boolean;
+}) {
+  const base = [
+    "You are Cognizant Agent, a precise and friendly compliance assistant.",
+    `Respond in ${preferredLanguage}.`,
+    "Be concise for casual chat. Be structured for policy questions.",
+    "Do not mention internal routing, tool names, retrieval steps, or hidden reasoning.",
+    "Available helper tools in this system:",
+    TOOL_CATALOG,
+    "Tools are optional and only used when they improve factual accuracy.",
+  ].join("\n");
+
+  if (!contextInfo) {
+    return forceToolGrounding
+      ? `${base}\n\nNo retrieval evidence available yet. Ask for clarification briefly or state that required evidence was not retrieved.`
+      : `${base}\n\nIf no retrieval evidence is provided, answer from general knowledge and keep uncertainty explicit.`;
+  }
+
+  return `${base}\n\nRetrieved evidence (internal grounding):\n${contextInfo}\n\nUse this evidence to improve factual accuracy.`;
+}
+
+function shouldUseTools(text: string) {
+  const query = text.trim();
+  if (!query) return false;
+
+  const tooShort = query.length < 12;
+  const greetingOnly = /^(hi|hello|hey|yo|sup|thanks|thank you|ok|okay)[!.\s]*$/i.test(query)
+    || /\bhow are you\b/i.test(query);
+  const policyIntent = /(rbi|regulation|guideline|rule|compliance|loan|lending|fldg|kfs|apr|cooling|grievance|recovery|interest|consent|timeline|penalty|india)/i.test(query);
+  const questionLike = /\?|what|how|why|when|which|can|is|are|should/i.test(query);
+
+  if (greetingOnly) return false;
+  if (tooShort && !policyIntent) return false;
+  return policyIntent || questionLike;
+}
+
+function isTaskQuery(text: string) {
+  const query = text.toLowerCase();
+  return /(explain|compare|analyze|check|verify|summarize|list|find|show|calculate|derive|evaluate|review|draft|prepare|give me|help me)/i.test(query);
+}
+
+function extractPlannedTools(text: string) {
+  const allowed = ["search", "lookup"];
+  const lower = text.toLowerCase();
+  const matched = allowed.filter((tool) => lower.includes(tool));
+  return matched.length > 0 ? matched : ["search"];
+}
+
 function groupMessages(messages: ChatMessageData[]): ChatGroup[] {
   const groups: ChatGroup[] = [];
   let i = 0;
@@ -87,6 +219,8 @@ function ChatPage() {
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [isThinking, setIsThinking] = useState(false);
   const [activeTools, setActiveTools] = useState<ToolStepData[]>([]);
+  const [reflectionSteps, setReflectionSteps] = useState<ToolStepData[]>([]);
+  const [reasoningSteps, setReasoningSteps] = useState<ToolStepData[]>([]);
   const [streamingContent, setStreamingContent] = useState("");
   const [cursorThinking, setCursorThinking] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -133,53 +267,273 @@ function ChatPage() {
     setMessages((prev) => [...prev, userMsg]);
     setIsThinking(true);
     setActiveTools([]);
+    setReflectionSteps([]);
+    setReasoningSteps([]);
     setStreamingContent("");
     setCursorThinking("");
 
     try {
-      const nextPlanning = pickRandomDifferent(planningLines, lastPlanningLine.current);
-      lastPlanningLine.current = nextPlanning;
-      setCursorThinking(nextPlanning);
-      await sleep(280 + Math.round(Math.random() * 320));
+      const casualMessage = isCasualMessage(text);
+      const responseModel = OLLAMA_MODELS.reasoning;
+      const preferredLanguage = detectPreferredLanguage(text);
 
-      const toolResults = await executeAllTools(text);
-      const currentToolSteps = toolResults.map((t): ToolStepData => ({
-        id: crypto.randomUUID(),
-        toolName: t.toolName,
-        status: t.status,
-        description: summarizeForThinking(t.output),
-        detail: t.output,
-        durationMs: t.durationMs,
-      }));
+      const heuristicToolNeed = shouldUseTools(text);
+      const taskLikeQuery = isTaskQuery(text);
+      let useTools = false;
+      let decisionThought = "A direct conversational reply is enough.";
 
-      setActiveTools([]);
-      for (const step of currentToolSteps) {
-        const toolLineOptions = toolRunLines.map((lineFactory) => lineFactory(step.toolName));
-        const line = pickRandomDifferent(toolLineOptions, lastToolLine.current);
-        lastToolLine.current = line;
-        setCursorThinking(line);
-        setActiveTools((prev) => [...prev, step]);
-        await sleep(180 + Math.round(Math.random() * 260));
+      if (!casualMessage) {
+        const decisionHistory: OllamaMessage[] = [
+          {
+            role: "system",
+            content:
+              "You are an intent router. Decide if the assistant should call retrieval tools or answer directly. Reply in exactly one line starting with TOOL: or DIRECT:, then a short thought. Choose DIRECT for greetings/chitchat. Choose TOOL for factual/regulatory questions.",
+          },
+          {
+            role: "user",
+            content: text,
+          },
+        ];
 
-        const seenLine = `Observed: ${step.description}`;
-        setCursorThinking(seenLine);
-        await sleep(180 + Math.round(Math.random() * 240));
+        const decisionText = await chatWithOllama(decisionHistory, OLLAMA_MODELS.fast);
+        const decision = parseToolDecision(decisionText);
+        useTools = heuristicToolNeed || taskLikeQuery;
+        decisionThought = decision.thought;
       }
 
-      const synthesisOptions = synthesisLines.map((lineFactory) => lineFactory(toolResults.length));
+      if (!casualMessage && (heuristicToolNeed || taskLikeQuery)) {
+        useTools = true;
+      }
+
+      const nextPlanning = pickRandomDifferent(planningLines, lastPlanningLine.current);
+      lastPlanningLine.current = nextPlanning;
+      setCursorThinking(useTools ? nextPlanning : decisionThought);
+      await sleep(280 + Math.round(Math.random() * 320));
+
+      let collectedResults: ToolResult[] = [];
+      let currentToolSteps: ToolStepData[] = [];
+      let currentThinkingSteps: ToolStepData[] = [];
+      let currentReasoningSteps: ToolStepData[] = [];
+
+      const addThinkingStep = (step: ToolStepData) => {
+        currentThinkingSteps = [...currentThinkingSteps, step];
+        setReflectionSteps((prev) => [...prev, step]);
+      };
+
+      if (useTools) {
+        const plannerHistory: OllamaMessage[] = [
+          {
+            role: "system",
+            content:
+              "You are a planning assistant. Decide which tools to run before answering. Available tools: search, lookup. Return only a comma-separated list using these tool names. If unsure, return search.",
+          },
+          {
+            role: "user",
+            content: `Question: ${text}`,
+          },
+        ];
+
+        const planText = await chatWithOllama(plannerHistory);
+        const plannedTools = extractPlannedTools(planText);
+        setCursorThinking("Gathering the most relevant rules before responding...");
+        await sleep(180 + Math.round(Math.random() * 220));
+
+        const maxReflectionRounds = 3;
+
+        for (let round = 1; round <= maxReflectionRounds; round++) {
+          const evidenceSummary = summarizeEvidence(collectedResults);
+          const reflectionHistory: OllamaMessage[] = [
+            {
+              role: "system",
+              content:
+                "You are a retrieval reflection agent. Propose ONE short next focus phrase to improve factual coverage for the user question. If evidence is already sufficient, return STOP. Keep response to a single line.",
+            },
+            {
+              role: "user",
+              content: `Question: ${text}\nCurrent evidence:\n${evidenceSummary || "none"}`,
+            },
+          ];
+
+          const reflectionStart: ToolStepData = {
+            id: crypto.randomUUID(),
+            toolName: "thinking",
+            status: "completed",
+            description: "Evaluating evidence coverage",
+            detail: "Evaluating whether more retrieval is needed",
+            durationMs: 1,
+          };
+          addThinkingStep(reflectionStart);
+          setCursorThinking("Checking if the current evidence is enough...");
+          await sleep(150 + Math.round(Math.random() * 160));
+
+          const reflection = await chatWithOllama(reflectionHistory);
+          const focus = parseReflectionFocus(reflection);
+          if (!focus && round > 1) {
+            addThinkingStep({
+              id: crypto.randomUUID(),
+              toolName: "thinking",
+              status: "completed",
+              description: "Coverage sufficient. No additional retrieval needed.",
+              detail: "Evidence looks complete for this question",
+              durationMs: 1,
+            });
+            setCursorThinking("Coverage looks sufficient. Moving to synthesis...");
+            await sleep(140 + Math.round(Math.random() * 160));
+            break;
+          }
+
+          const effectiveFocus = focus ?? "core policy constraints";
+          addThinkingStep({
+            id: crypto.randomUUID(),
+            toolName: "thinking",
+            status: "completed",
+            description: `Focus selected: ${effectiveFocus}`,
+            detail: `Exploring this angle: ${effectiveFocus}`,
+            durationMs: 1,
+          });
+          setCursorThinking(`Exploring: ${effectiveFocus}`);
+          await sleep(170 + Math.round(Math.random() * 220));
+
+          const roundQuery = `${text}\nFocus: ${effectiveFocus}`;
+          const roundResults = await executeAllTools(roundQuery);
+          const uniqueRound = dedupeToolResults(roundResults).filter((candidate) => {
+            return !collectedResults.some(
+              (existing) => existing.toolName === candidate.toolName && existing.output === candidate.output,
+            );
+          });
+
+          if (uniqueRound.length === 0) {
+            addThinkingStep({
+              id: crypto.randomUUID(),
+              toolName: "thinking",
+              status: "failed",
+              description: "No new evidence discovered this round",
+              detail: `No new evidence for focus: ${effectiveFocus}`,
+              durationMs: 1,
+            });
+            setCursorThinking("No new evidence found in this pass. Trying alternate angle...");
+            await sleep(140 + Math.round(Math.random() * 180));
+            continue;
+          }
+
+          for (const result of uniqueRound) {
+            const reflectionResult = await reflect(text, result);
+            const reflectionStep: ToolStepData = {
+              id: crypto.randomUUID(),
+              toolName: reflectionResult.toolName,
+              status: reflectionResult.status,
+              description: summarizeForThinking(reflectionResult.output),
+              detail: reflectionResult.output,
+              durationMs: reflectionResult.durationMs,
+            };
+            addThinkingStep(reflectionStep);
+
+            const step: ToolStepData = {
+              id: crypto.randomUUID(),
+              toolName: result.toolName,
+              status: result.status,
+              description: summarizeForThinking(result.output),
+              detail: result.output,
+              durationMs: result.durationMs,
+            };
+            currentToolSteps.push(step);
+
+            const toolLineOptions = toolRunLines.map((lineFactory) => lineFactory(step.toolName));
+            const line = pickRandomDifferent(toolLineOptions, lastToolLine.current);
+            lastToolLine.current = line;
+            setCursorThinking(line);
+            setActiveTools((prev) => [...prev, step]);
+            await sleep(170 + Math.round(Math.random() * 230));
+
+            const seenLine = `Observed: ${step.description}`;
+            setCursorThinking(seenLine);
+            await sleep(170 + Math.round(Math.random() * 210));
+          }
+
+          collectedResults = dedupeToolResults([...collectedResults, ...uniqueRound]);
+        }
+
+        if (currentToolSteps.length === 0) {
+          const fallbackResult = await executeAllTools(text);
+          const fallbackSteps = dedupeToolResults(fallbackResult).map((result): ToolStepData => ({
+            id: crypto.randomUUID(),
+            toolName: result.toolName,
+            status: result.status,
+            description: summarizeForThinking(result.output),
+            detail: result.output,
+            durationMs: result.durationMs,
+          }));
+          currentToolSteps = fallbackSteps;
+          setActiveTools(fallbackSteps);
+          collectedResults = dedupeToolResults([...collectedResults, ...fallbackResult]);
+
+          for (const result of fallbackResult) {
+            const reflectionResult = await reflect(text, result);
+            const reflectionStep: ToolStepData = {
+              id: crypto.randomUUID(),
+              toolName: reflectionResult.toolName,
+              status: reflectionResult.status,
+              description: summarizeForThinking(reflectionResult.output),
+              detail: reflectionResult.output,
+              durationMs: reflectionResult.durationMs,
+            };
+            addThinkingStep(reflectionStep);
+          }
+        }
+
+        if (collectedResults.length === 0) {
+          const emergencySearch = await executeAllTools(`regulation policy compliance ${text}`);
+          const emergencyUnique = dedupeToolResults(emergencySearch);
+          for (const result of emergencyUnique) {
+            const step: ToolStepData = {
+              id: crypto.randomUUID(),
+              toolName: result.toolName,
+              status: result.status,
+              description: summarizeForThinking(result.output),
+              detail: result.output,
+              durationMs: result.durationMs,
+            };
+            currentToolSteps.push(step);
+          }
+          collectedResults = dedupeToolResults([...collectedResults, ...emergencyUnique]);
+        }
+      } else {
+        setCursorThinking("Preparing a direct reply...");
+        await sleep(180 + Math.round(Math.random() * 180));
+      }
+
+      if (collectedResults.length > 0) {
+        const summaryResult = await summarize(text, collectedResults);
+        if (summaryResult.status === "completed") {
+          const summaryStep: ToolStepData = {
+            id: crypto.randomUUID(),
+            toolName: summaryResult.toolName,
+            status: summaryResult.status,
+            description: summarizeForThinking(summaryResult.output),
+            detail: summaryResult.output,
+            durationMs: summaryResult.durationMs,
+          };
+          currentToolSteps = [...currentToolSteps, summaryStep];
+          setActiveTools((prev) => [...prev, summaryStep]);
+        }
+      }
+
+      const synthesisOptions = synthesisLines.map((lineFactory) => lineFactory(currentToolSteps.length));
       const nextSynthesis = pickRandomDifferent(synthesisOptions, lastSynthesisLine.current);
       lastSynthesisLine.current = nextSynthesis;
       setCursorThinking(nextSynthesis);
       await sleep(220 + Math.round(Math.random() * 260));
 
-      const contextInfo = toolResults
+      const contextInfo = collectedResults
         .filter(t => t.status === "completed")
-        .map(t => `[${t.toolName}] ${t.output}`)
+        .map(t => t.output)
         .join("\n\n");
 
-      const systemPrompt = contextInfo
-        ? `Reference: ${contextInfo}\n\nProvide a clear, structured answer citing sources.`
-        : "";
+      const systemPrompt = buildSystemPrompt({
+        preferredLanguage,
+        contextInfo,
+        forceToolGrounding: useTools,
+      });
 
       const currentHistory: OllamaMessage[] = messages
         .slice(-10)
@@ -192,10 +546,37 @@ function ChatPage() {
 
       setCursorThinking("");
 
+      if (useTools && (currentToolSteps.length > 0 || currentThinkingSteps.length > 0)) {
+        const workflowMsg: ChatMessageData = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "I gathered the relevant evidence and validated it. Generating your final response now.",
+          toolSteps: currentToolSteps,
+          thinkingSteps: currentThinkingSteps,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        };
+        setMessages((prev) => [...prev, workflowMsg]);
+      }
+
       let fullContent = "";
-      for await (const chunk of chatWithOllamaStream(currentHistory)) {
-        fullContent = chunk;
+      let fullReasoning = "";
+      for await (const chunk of chatWithOllamaStream(currentHistory, responseModel)) {
+        fullContent = chunk.content;
+        fullReasoning = chunk.thinking;
         setStreamingContent(fullContent);
+        if (!casualMessage && fullReasoning.trim().length > 0) {
+          const line = latestReasoningLine(fullReasoning);
+          const reasoningStep: ToolStepData = {
+            id: "reasoning-live",
+            toolName: "model",
+            status: "completed",
+            description: line,
+            detail: fullReasoning,
+            durationMs: 1,
+          };
+          currentReasoningSteps = [reasoningStep];
+          setReasoningSteps(currentReasoningSteps);
+        }
       }
 
       const assistantMsg: ChatMessageData = {
@@ -203,11 +584,15 @@ function ChatPage() {
         role: "assistant",
         content: fullContent,
         toolSteps: currentToolSteps,
+        reasoningSteps: !casualMessage && currentReasoningSteps.length > 0 ? currentReasoningSteps : undefined,
+        thinkingSteps: currentThinkingSteps.length > 0 ? currentThinkingSteps : undefined,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setMessages((prev) => [...prev, assistantMsg]);
       setStreamingContent("");
       setActiveTools([]);
+      setReflectionSteps([]);
+      setReasoningSteps([]);
     } catch (error) {
       setCursorThinking("");
       const assistantMsg: ChatMessageData = {
@@ -228,6 +613,8 @@ function ChatPage() {
     } finally {
       setIsThinking(false);
       setCursorThinking("");
+      setReflectionSteps([]);
+      setReasoningSteps([]);
     }
   }, [messages]);
 
@@ -284,6 +671,26 @@ function ChatPage() {
                         toolSteps={activeTools}
                         defaultOpen
                         title="Tool discovery"
+                      />
+                    </div>
+                  )}
+
+                  {reflectionSteps.length > 0 && (
+                    <div className="mb-3">
+                      <ToolAccordion
+                        toolSteps={reflectionSteps}
+                        defaultOpen={false}
+                        title="Thinking"
+                      />
+                    </div>
+                  )}
+
+                  {reasoningSteps.length > 0 && (
+                    <div className="mb-3">
+                      <ToolAccordion
+                        toolSteps={reasoningSteps}
+                        defaultOpen
+                        title="Reasoning"
                       />
                     </div>
                   )}
