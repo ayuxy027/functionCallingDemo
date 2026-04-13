@@ -18,6 +18,15 @@ function pickRandom<T>(options: T[]) {
   return options[Math.floor(Math.random() * options.length)];
 }
 
+function pickRandomDifferent(options: string[], previous: string) {
+  if (options.length <= 1) return options[0] ?? "";
+  let next = pickRandom(options);
+  while (next === previous) {
+    next = pickRandom(options);
+  }
+  return next;
+}
+
 function trimQuery(text: string) {
   const value = text.trim();
   return value.length <= 54 ? value : `${value.slice(0, 54)}...`;
@@ -58,6 +67,9 @@ function ChatPage() {
   const [streamingContent, setStreamingContent] = useState("");
   const [cursorThinking, setCursorThinking] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const lastPlanningLine = useRef("");
+  const lastToolLine = useRef("");
+  const lastSynthesisLine = useRef("");
 
   const groups = useMemo(() => groupMessages(messages), [messages]);
 
@@ -102,7 +114,9 @@ function ChatPage() {
     setCursorThinking("");
 
     try {
-      setCursorThinking(pickRandom(planningLines));
+      const nextPlanning = pickRandomDifferent(planningLines, lastPlanningLine.current);
+      lastPlanningLine.current = nextPlanning;
+      setCursorThinking(nextPlanning);
       await sleep(280 + Math.round(Math.random() * 320));
 
       const toolResults = await executeAllTools(text);
@@ -117,13 +131,18 @@ function ChatPage() {
 
       setActiveTools([]);
       for (const step of currentToolSteps) {
-        const line = pickRandom(toolRunLines)(step.toolName);
+        const toolLineOptions = toolRunLines.map((lineFactory) => lineFactory(step.toolName));
+        const line = pickRandomDifferent(toolLineOptions, lastToolLine.current);
+        lastToolLine.current = line;
         setCursorThinking(line);
         setActiveTools((prev) => [...prev, step]);
         await sleep(180 + Math.round(Math.random() * 260));
       }
 
-      setCursorThinking(pickRandom(synthesisLines)(toolResults.length));
+      const synthesisOptions = synthesisLines.map((lineFactory) => lineFactory(toolResults.length));
+      const nextSynthesis = pickRandomDifferent(synthesisOptions, lastSynthesisLine.current);
+      lastSynthesisLine.current = nextSynthesis;
+      setCursorThinking(nextSynthesis);
       await sleep(220 + Math.round(Math.random() * 260));
 
       const contextInfo = toolResults
