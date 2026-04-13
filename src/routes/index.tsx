@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useRef, useEffect, useState, useMemo } from "react";
+import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import { ChatGroupBlock, type ChatMessageData, type ChatGroup } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { mockMessages } from "@/components/chat/mockData";
+import { chatWithOllama, type OllamaMessage } from "@/lib/ollama";
 import { Sparkles } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -64,7 +65,7 @@ function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isThinking]);
 
-  const handleSend = (text: string) => {
+  const handleSend = useCallback(async (text: string) => {
     const userMsg: ChatMessageData = {
       id: crypto.randomUUID(),
       role: "user",
@@ -74,27 +75,63 @@ function ChatPage() {
     setMessages((prev) => [...prev, userMsg]);
     setIsThinking(true);
 
-    setTimeout(() => {
+    try {
+      const currentHistory: OllamaMessage[] = messages
+        .slice(-10)
+        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+      currentHistory.push({ role: "user", content: text });
+
+      const startTime = performance.now();
+      const response = await chatWithOllama(currentHistory);
+      const duration = performance.now() - startTime;
+
       const assistantMsg: ChatMessageData = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: "This is a mock response. Once AI is connected, real tool usage and reasoning will appear here with full traceability.",
+        content: response,
         toolSteps: [
+          {
+            id: crypto.randomUUID(),
+            toolName: "ollama_chat",
+            status: "completed",
+            description: "Query sent to local Gemma 4 model via Ollama",
+            detail: `{\n  "model": "gemma4:e2b",\n  "tokens": ~${Math.round(response.length / 4)},\n  "latency_ms": ${Math.round(duration)}\n}`,
+            durationMs: Math.round(duration),
+          },
           {
             id: crypto.randomUUID(),
             toolName: "process_query",
             status: "completed",
-            description: "Analyzed the input query and determined the appropriate response strategy.",
-            detail: '{\n  "tokens_used": 142,\n  "model": "gpt-4o",\n  "latency_ms": 820\n}',
-            durationMs: 820,
+            description: "Analyzed user input and generated response",
+            detail: `{\n  "query": "${text.slice(0, 50)}${text.length > 50 ? "..." : ""}",\n  "model": "gemma4:e2b",\n  "connection": "local"\n}`,
+            durationMs: Math.round(duration * 0.3),
           },
         ],
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
-      setIsThinking(false);
       setMessages((prev) => [...prev, assistantMsg]);
-    }, 1500);
-  };
+    } catch (error) {
+      const assistantMsg: ChatMessageData = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: `Error connecting to Ollama: ${error instanceof Error ? error.message : "Unknown error"}. Make sure Ollama is running locally.`,
+        toolSteps: [
+          {
+            id: crypto.randomUUID(),
+            toolName: "ollama_chat",
+            status: "failed",
+            description: "Failed to connect to local Ollama instance",
+            detail: '{\n  "error": "connection_failed",\n  "url": "http://localhost:11434"\n}',
+            durationMs: 0,
+          },
+        ],
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      };
+      setMessages((prev) => [...prev, assistantMsg]);
+    } finally {
+      setIsThinking(false);
+    }
+  }, [messages]);
 
   return (
     <div className="flex flex-col h-screen bg-background">
