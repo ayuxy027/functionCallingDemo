@@ -26,12 +26,6 @@ function groupMessages(messages: ChatMessageData[]): ChatGroup[] {
       }
       groups.push(group);
     } else {
-      // orphan assistant message — wrap it
-      groups.push({
-        id: messages[i].id,
-        userMessage: { id: messages[i].id + "-empty", role: "user", content: "", timestamp: "" },
-        assistantMessage: messages[i],
-      });
       i += 1;
     }
   }
@@ -40,17 +34,23 @@ function groupMessages(messages: ChatMessageData[]): ChatGroup[] {
 
 function ThinkingIndicator() {
   return (
-    <div className="flex items-center gap-3 py-5 animate-fade-in">
-      <div className="shrink-0 h-7 w-7 rounded-full bg-foreground/[0.05] flex items-center justify-center">
-        <Sparkles className="h-3.5 w-3.5 text-foreground/40" />
+    <div className="flex items-start gap-4 pt-8 pb-6 animate-message-in">
+      <div className="shrink-0 h-8 w-8 rounded-full bg-foreground/[0.04] flex items-center justify-center">
+        <Sparkles className="h-4 w-4 text-foreground/35 animate-thinking-pulse" strokeWidth={1.8} />
       </div>
-      <div className="flex items-center gap-1.5">
-        <span className="h-1.5 w-1.5 rounded-full bg-foreground/20 animate-[pulse_1.4s_ease-in-out_infinite]" />
-        <span className="h-1.5 w-1.5 rounded-full bg-foreground/20 animate-[pulse_1.4s_ease-in-out_0.2s_infinite]" />
-        <span className="h-1.5 w-1.5 rounded-full bg-foreground/20 animate-[pulse_1.4s_ease-in-out_0.4s_infinite]" />
+      <div className="flex items-center gap-2 pt-2">
+        <span className="text-[12px] text-muted-foreground/40 mr-1">Thinking</span>
+        <span className="h-1.5 w-1.5 rounded-full bg-foreground/15 animate-dot-bounce" style={{ animationDelay: "0ms" }} />
+        <span className="h-1.5 w-1.5 rounded-full bg-foreground/15 animate-dot-bounce" style={{ animationDelay: "160ms" }} />
+        <span className="h-1.5 w-1.5 rounded-full bg-foreground/15 animate-dot-bounce" style={{ animationDelay: "320ms" }} />
       </div>
     </div>
   );
+}
+
+let idCounter = 100;
+function makeId() {
+  return "msg-" + (++idCounter);
 }
 
 function ChatPage() {
@@ -66,7 +66,7 @@ function ChatPage() {
 
   const handleSend = (text: string) => {
     const userMsg: ChatMessageData = {
-      id: crypto.randomUUID(),
+      id: makeId(),
       role: "user",
       content: text,
       timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
@@ -76,53 +76,65 @@ function ChatPage() {
 
     setTimeout(() => {
       const assistantMsg: ChatMessageData = {
-        id: crypto.randomUUID(),
+        id: makeId(),
         role: "assistant",
-        content: "This is a mock response. Once AI is connected, real tool usage and reasoning will appear here with full traceability.",
+        content: "This is a mock response. Once AI is connected, real tool usage and reasoning traces will appear here with full traceability of each decision the model makes.",
         toolSteps: [
           {
-            id: crypto.randomUUID(),
-            toolName: "process_query",
+            id: makeId(),
+            toolName: "analyze_query",
             status: "completed",
-            description: "Analyzed the input query and determined the appropriate response strategy.",
-            detail: '{\n  "tokens_used": 142,\n  "model": "gpt-4o",\n  "latency_ms": 820\n}',
-            durationMs: 820,
+            description: "Parsed and analyzed the input query to determine intent and required capabilities.",
+            detail: '{\n  "intent": "general_query",\n  "confidence": 0.94,\n  "requires_tools": true\n}',
+            durationMs: 340,
+          },
+          {
+            id: makeId(),
+            toolName: "generate_response",
+            status: "completed",
+            description: "Generated a contextual response based on the analysis and available knowledge.",
+            detail: '{\n  "model": "gpt-4o",\n  "tokens_in": 86,\n  "tokens_out": 142,\n  "latency_ms": 680\n}',
+            durationMs: 680,
           },
         ],
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setIsThinking(false);
       setMessages((prev) => [...prev, assistantMsg]);
-    }, 1500);
+    }, 2000);
   };
 
   return (
     <div className="flex flex-col h-screen bg-background">
       {/* Header */}
-      <header className="shrink-0 px-6 py-4 flex items-center gap-3">
-        <div className="h-7 w-7 rounded-lg bg-foreground/[0.06] flex items-center justify-center">
-          <Sparkles className="h-3.5 w-3.5 text-foreground/40" />
+      <header className="shrink-0 px-8 py-5 flex items-center gap-3.5">
+        <div className="h-8 w-8 rounded-xl bg-surface flex items-center justify-center">
+          <Sparkles className="h-4 w-4 text-muted-foreground" strokeWidth={1.8} />
         </div>
         <div>
-          <h1 className="text-[13px] font-semibold text-foreground tracking-tight leading-none">Agent Chat</h1>
-          <p className="text-[11px] text-muted-foreground/60 mt-0.5">Reasoning trace & tool usage</p>
+          <h1 className="text-[14px] font-semibold text-foreground tracking-[-0.02em] leading-none">
+            Agent Chat
+          </h1>
+          <p className="text-[11px] text-muted-foreground/50 mt-1 tracking-[-0.01em]">
+            Tool usage & reasoning trace
+          </p>
         </div>
       </header>
 
-      <div className="h-px bg-border/40" />
+      <div className="h-px bg-border/30 mx-6" />
 
       {/* Messages */}
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-[720px] mx-auto px-6 py-4">
+        <div className="max-w-[700px] mx-auto px-8 pb-6">
           {groups.map((group, i) => (
             <div key={group.id}>
-              {i > 0 && <div className="h-px bg-border/30 my-2" />}
-              <ChatGroupBlock group={group} />
+              {i > 0 && <div className="h-px bg-border/20 mx-4" />}
+              <ChatGroupBlock group={group} index={i} />
             </div>
           ))}
           {isThinking && (
             <>
-              <div className="h-px bg-border/30 my-2" />
+              <div className="h-px bg-border/20 mx-4" />
               <ThinkingIndicator />
             </>
           )}
@@ -131,8 +143,8 @@ function ChatPage() {
       </main>
 
       {/* Input */}
-      <div className="h-px bg-border/40" />
-      <footer className="shrink-0 px-6 py-4">
+      <div className="h-px bg-border/30 mx-6" />
+      <footer className="shrink-0 px-8 py-5">
         <ChatInput onSend={handleSend} disabled={isThinking} />
       </footer>
     </div>

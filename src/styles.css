@@ -5,16 +5,6 @@
 
 /*
  * Design system definition.
- *
- * The @theme inline block maps CSS custom properties to Tailwind utility
- * classes (e.g. --color-primary -> bg-primary, text-primary).
- *
- * The :root and .dark blocks define the actual color values using oklch.
- * All colors MUST use oklch format.
- *
- * To add a new semantic color:
- * 1. Add the variable to :root (light value) and .dark (dark value)
- * 2. Register it in @theme inline as --color-<name>: var(--<name>)
  */
 
 @theme inline {
@@ -58,29 +48,119 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-tool-success: var(--tool-success);
+  --color-tool-running: var(--tool-running);
+  --color-tool-failed: var(--tool-failed);
+  --color-surface: var(--surface);
+  --color-surface-foreground: var(--surface-foreground);
+  --color-surface-elevated: var(--surface-elevated);
+
+  --animate-message-in: message-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-tool-card-in: tool-card-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-tool-step-in: tool-step-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-response-in: response-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-thinking-pulse: thinking-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-dot-bounce: dot-bounce 1.4s ease-in-out infinite;
+  --animate-slide-up-fade: slide-up-fade 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes message-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes tool-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes tool-step-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes response-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes thinking-pulse {
+  0%, 100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes dot-bounce {
+  0%, 80%, 100% {
+    transform: scale(0.6);
+    opacity: 0.3;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes slide-up-fade {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 :root {
   --radius: 0.75rem;
-  --background: oklch(0.985 0.002 90);
-  --foreground: oklch(0.18 0.01 260);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.129 0.042 264.695);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.129 0.042 264.695);
-  --primary: oklch(0.208 0.042 265.755);
-  --primary-foreground: oklch(0.984 0.003 247.858);
-  --secondary: oklch(0.968 0.007 247.896);
-  --secondary-foreground: oklch(0.208 0.042 265.755);
-  --muted: oklch(0.968 0.007 247.896);
-  --muted-foreground: oklch(0.554 0.046 257.417);
-  --accent: oklch(0.968 0.007 247.896);
-  --accent-foreground: oklch(0.208 0.042 265.755);
+  --background: oklch(0.988 0.001 90);
+  --foreground: oklch(0.145 0.015 260);
+  --card: oklch(0.997 0 0);
+  --card-foreground: oklch(0.145 0.015 260);
+  --popover: oklch(0.997 0 0);
+  --popover-foreground: oklch(0.145 0.015 260);
+  --primary: oklch(0.205 0.04 265);
+  --primary-foreground: oklch(0.985 0.003 247);
+  --secondary: oklch(0.965 0.005 250);
+  --secondary-foreground: oklch(0.205 0.04 265);
+  --muted: oklch(0.96 0.005 250);
+  --muted-foreground: oklch(0.52 0.02 260);
+  --accent: oklch(0.96 0.005 250);
+  --accent-foreground: oklch(0.205 0.04 265);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.984 0.003 247.858);
-  --border: oklch(0.929 0.013 255.508);
-  --input: oklch(0.929 0.013 255.508);
-  --ring: oklch(0.704 0.04 256.788);
+  --border: oklch(0.92 0.005 260);
+  --input: oklch(0.92 0.005 260);
+  --ring: oklch(0.7 0.03 260);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -94,6 +174,13 @@
   --sidebar-accent-foreground: oklch(0.208 0.042 265.755);
   --sidebar-border: oklch(0.929 0.013 255.508);
   --sidebar-ring: oklch(0.704 0.04 256.788);
+
+  --tool-success: oklch(0.72 0.14 155);
+  --tool-running: oklch(0.75 0.12 80);
+  --tool-failed: oklch(0.65 0.2 25);
+  --surface: oklch(0.975 0.003 250);
+  --surface-foreground: oklch(0.35 0.02 260);
+  --surface-elevated: oklch(0.997 0 0);
 }
 
 .dark {
@@ -129,6 +216,13 @@
   --sidebar-accent-foreground: oklch(0.984 0.003 247.858);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.551 0.027 264.364);
+
+  --tool-success: oklch(0.72 0.14 155);
+  --tool-running: oklch(0.75 0.12 80);
+  --tool-failed: oklch(0.65 0.2 25);
+  --surface: oklch(0.18 0.03 262);
+  --surface-foreground: oklch(0.7 0.02 260);
+  --surface-elevated: oklch(0.22 0.035 263);
 }
 
 @layer base {
@@ -139,5 +233,25 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* Scrollbar styling */
+@layer base {
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: oklch(0.8 0.005 260);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.7 0.01 260);
   }
 }
