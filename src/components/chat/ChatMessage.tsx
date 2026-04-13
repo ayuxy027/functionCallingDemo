@@ -1,6 +1,14 @@
 import { cn } from "@/lib/utils";
-import { ToolStep, type ToolStepData } from "./ToolStep";
-import { User, Sparkles } from "lucide-react";
+import { User, Sparkles, Search, Check } from "lucide-react";
+
+export interface ToolStepData {
+  id: string;
+  toolName: string;
+  status: "completed" | "failed";
+  description: string;
+  detail: string;
+  durationMs?: number;
+}
 
 export interface ChatMessageData {
   id: string;
@@ -55,31 +63,14 @@ export function ChatGroupBlock({ group }: { group: ChatGroup }) {
       {group.assistantMessage && (
         <div className="flex items-start gap-3 pb-2">
           <Avatar role="assistant" />
-          <div className="min-w-0 flex-1 space-y-3 pt-0.5">
-            {/* Tool steps */}
+          <div className="min-w-0 flex-1 space-y-2 pt-0.5">
+            {/* Tool usage inline */}
             {group.assistantMessage.toolSteps && group.assistantMessage.toolSteps.length > 0 && (
-              <div className="rounded-xl border border-border/50 bg-muted/20 overflow-hidden">
-                <div className="px-3.5 py-2.5 flex items-center gap-2">
-                  <div className="flex items-center gap-1">
-                    {group.assistantMessage.toolSteps.map((_, i) => (
-                      <span
-                        key={i}
-                        className="h-1 w-1 rounded-full bg-foreground/20"
-                      />
-                    ))}
-                  </div>
-                  <span className="text-[11px] text-muted-foreground font-medium">
-                    Used {group.assistantMessage.toolSteps.length} tool{group.assistantMessage.toolSteps.length > 1 ? "s" : ""}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground/50 ml-auto tabular-nums">
-                    {group.assistantMessage.toolSteps.reduce((sum, s) => sum + (s.durationMs || 0), 0)}ms total
-                  </span>
-                </div>
-                <div className="border-t border-border/30 px-1.5 py-1">
-                  {group.assistantMessage.toolSteps.map((step) => (
-                    <ToolStep key={step.id} step={step} />
-                  ))}
-                </div>
+              <div className="flex items-center gap-2 text-[10px] text-foreground/50">
+                <Search className="h-2.5 w-2.5" />
+                <span className="font-medium">Using [{group.assistantMessage.toolSteps[0]?.toolName}]</span>
+                <span className="text-foreground/30">•</span>
+                <span>{group.assistantMessage.toolSteps[0]?.description}</span>
               </div>
             )}
 
