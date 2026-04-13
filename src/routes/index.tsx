@@ -2,9 +2,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useEffect, useState, useMemo, useCallback } from "react";
 import { ChatGroupBlock, type ChatMessageData, type ChatGroup, type ToolStepData } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
+import { ReasoningStream, type ReasoningStepData } from "@/components/chat/ReasoningStream";
 import { mockMessages } from "@/components/chat/mockData";
-import { chatWithOllama, type OllamaMessage } from "@/lib/ollama";
-import { executeAllTools, type ToolResult } from "@/lib/tools";
+import { chatWithOllamaStream, type OllamaMessage } from "@/lib/ollama-stream";
+import { executeAllTools } from "@/lib/tools";
 import { Sparkles } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -28,7 +29,6 @@ function groupMessages(messages: ChatMessageData[]): ChatGroup[] {
       }
       groups.push(group);
     } else {
-      // orphan assistant message — wrap it
       groups.push({
         id: messages[i].id,
         userMessage: { id: messages[i].id + "-empty", role: "user", content: "", timestamp: "" },
@@ -58,15 +58,17 @@ function ThinkingIndicator() {
 function ChatPage() {
   const [messages, setMessages] = useState<ChatMessageData[]>(mockMessages);
   const [isThinking, setIsThinking] = useState(false);
+  const [reasoningSteps, setReasoningSteps] = useState<ReasoningStepData[]>([]);
+  const [streamingContent, setStreamingContent] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const groups = useMemo(() => groupMessages(messages), [messages]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isThinking]);
+  }, [messages, isThinking, reasoningSteps]);
 
-const handleSend = useCallback(async (text: string) => {
+  const handleSend = useCallback(async (text: string) => {
     const userMsg: ChatMessageData = {
       id: crypto.randomUUID(),
       role: "user",
@@ -75,19 +77,49 @@ const handleSend = useCallback(async (text: string) => {
     };
     setMessages((prev) => [...prev, userMsg]);
     setIsThinking(true);
+    setReasoningSteps([]);
+    setStreamingContent("");
 
     try {
-      const toolStart = performance.now();
-      const toolResults = await executeAllTools(text);
-      const toolDuration = Math.round(performance.now() - toolStart);
+      // Step 1: Thinking
+      const thinking: ReasoningStepData = {
+        id: crypto.randomUUID(),
+        type: "thinking",
+        content: "Analyzing your query and planning approach...",
+        status: "running",
+      };
+      setReasoningSteps([thinking]);
 
+      // Step 2: Execute tools
+      const toolResults = await executeAllTools(text);
+      const toolStep: ReasoningStepData = {
+        id: crypto.randomUUID(),
+        type: "tool_use",
+        content: `Searching regulatory data for relevant information...`,
+        toolName: toolResults[0]?.toolName || "search",
+        status: "running",
+      };
+      setReasoningSteps(prev => [...prev, toolStep]);
+
+      // Get context from tools
       const contextInfo = toolResults
         .filter(t => t.status === "completed" && t.output !== "No results found")
         .map(t => `[${t.toolName}] ${t.output}`)
         .join("\n\n");
 
+      const resultStep: ReasoningStepData = {
+        id: crypto.randomUUID(),
+        type: "tool_result",
+        content: contextInfo 
+          ? `Found ${toolResults.length} relevant rule(s) in the data`
+          : "No specific rules found - responding from knowledge",
+        status: contextInfo ? "completed" : "completed",
+      };
+      setReasoningSteps(prev => [...prev, resultStep]);
+
+      // Build context prompt
       const systemPrompt = contextInfo
-        ? `You are a regulatory compliance assistant. Use the following reference data to answer accurately:\n\n${contextInfo}\n\nIf the reference data answers the question, cite it. Otherwise, say you don't know.`
+        ? `You are a regulatory compliance assistant. Use this reference data to answer accurately:\n\n${contextInfo}\n\nCite the rules in your response when applicable.`
         : "";
 
       const currentHistory: OllamaMessage[] = messages
@@ -99,75 +131,88 @@ const handleSend = useCallback(async (text: string) => {
       }
       currentHistory.push({ role: "user", content: text });
 
-      const llmStart = performance.now();
-      const response = await chatWithOllama(currentHistory);
-      const llmDuration = Math.round(performance.now() - llmStart);
-      const totalDuration = toolDuration + llmDuration;
+      // Step 3: Stream response from LLM
+      const respondStep: ReasoningStepData = {
+        id: crypto.randomUUID(),
+        type: "responding",
+        content: "Generating response...",
+        status: "running",
+      };
+      setReasoningSteps(prev => [...prev, respondStep]);
+
+      let fullContent = "";
+      for await (const chunk of chatWithOllamaStream(currentHistory)) {
+        fullContent = chunk;
+        setStreamingContent(fullContent);
+      }
+
+      // Complete
+      setReasoningSteps(prev =>
+        prev.map(s => s.status === "running" ? { ...s, status: "completed" as const } : s)
+      );
 
       const assistantMsg: ChatMessageData = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: response,
+        content: fullContent,
         toolSteps: [
           ...toolResults.map((t): ToolStepData => ({
             id: crypto.randomUUID(),
             toolName: t.toolName,
             status: t.status as "completed" | "failed",
-            description: `Searched data for: ${t.input}`,
+            description: `Executed ${t.toolName} for: ${t.input}`,
             detail: t.output.slice(0, 200) + (t.output.length > 200 ? "..." : ""),
             durationMs: t.durationMs,
           })),
-          {
-            id: crypto.randomUUID(),
-            toolName: "ollama_chat",
-            status: "completed",
-            description: "Query sent to local Gemma 4 model via Ollama",
-            detail: `{\n  "model": "gemma4:e2b",\n  "context_used": ${contextInfo ? "yes" : "no"},\n  "latency_ms": ${llmDuration}\n}`,
-            durationMs: llmDuration,
-          },
         ],
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setMessages((prev) => [...prev, assistantMsg]);
+      setStreamingContent("");
     } catch (error) {
+      const errorStep: ReasoningStepData = {
+        id: crypto.randomUUID(),
+        type: "responding",
+        content: `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
+        status: "failed",
+      };
+      setReasoningSteps(prev => [...prev, errorStep]);
+
       const assistantMsg: ChatMessageData = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: `Error connecting to Ollama: ${error instanceof Error ? error.message : "Unknown error"}. Make sure Ollama is running locally.`,
-        toolSteps: [
-          {
-            id: crypto.randomUUID(),
-            toolName: "ollama_chat",
-            status: "failed",
-            description: "Failed to connect to local Ollama instance",
-            detail: '{\n  "error": "connection_failed",\n  "url": "http://localhost:11434"\n}',
-            durationMs: 0,
-          },
-        ],
+        content: `Error: ${error instanceof Error ? error.message : "Unknown error"}. Make sure Ollama is running.`,
+        toolSteps: [{
+          id: crypto.randomUUID(),
+          toolName: "error",
+          status: "failed",
+          description: "Failed to process query",
+          detail: "{}",
+          durationMs: 0,
+        }],
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setMessages((prev) => [...prev, assistantMsg]);
     } finally {
       setIsThinking(false);
+      setStreamingContent("");
     }
   }, [messages]);
 
   return (
     <div className="flex flex-col h-screen bg-background">
-      {/* Header */}
       <header className="shrink-0 px-6 py-4 flex items-center gap-3">
         <div className="h-7 w-7 rounded-lg bg-foreground/[0.06] flex items-center justify-center">
           <Sparkles className="h-3.5 w-3.5 text-foreground/40" />
         </div>
         <div>
           <h1 className="text-[13px] font-semibold text-foreground tracking-tight leading-none">Agent Chat</h1>
-          <p className="text-[11px] text-muted-foreground/60 mt-0.5">Reasoning trace & tool usage</p>
+          <p className="text-[11px] text-muted-foreground/60 mt-0.5">Chain of Thought + Tool Execution</p>
         </div>
       </header>
 
       <div className="h-px bg-border/40" />
 
-      {/* Messages */}
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-[720px] mx-auto px-6 py-4">
           {groups.map((group, i) => (
@@ -176,17 +221,30 @@ const handleSend = useCallback(async (text: string) => {
               <ChatGroupBlock group={group} />
             </div>
           ))}
-          {isThinking && (
+          
+          {(isThinking || reasoningSteps.length > 0) && (
             <>
               <div className="h-px bg-border/30 my-2" />
-              <ThinkingIndicator />
+              <ReasoningStream steps={reasoningSteps} />
+              {streamingContent && (
+                <div className="mt-3 animate-fade-in">
+                  <p className="text-[13px] text-foreground/85 leading-[1.7]">
+                    {streamingContent}
+                    <span className="inline-flex gap-0.5 ml-0.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-foreground/30 animate-bounce" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-foreground/30 animate-bounce [animation-delay:0.15s]" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-foreground/30 animate-bounce [animation-delay:0.3s]" />
+                    </span>
+                  </p>
+                </div>
+              )}
+              {isThinking && !streamingContent && <ThinkingIndicator />}
             </>
           )}
           <div ref={bottomRef} />
         </div>
       </main>
 
-      {/* Input */}
       <div className="h-px bg-border/40" />
       <footer className="shrink-0 px-6 py-4">
         <ChatInput onSend={handleSend} disabled={isThinking} />
