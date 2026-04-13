@@ -1,5 +1,5 @@
 import { useState, type FormEvent, useRef, useEffect } from "react";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, Send } from "lucide-react";
 
 interface ChatInputProps {
   onSend: (message: string) => void;
@@ -26,8 +26,8 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="w-full max-w-[680px] mx-auto">
-      <div className="flex items-end gap-3 rounded-2xl border border-border/50 bg-card px-4 py-3 transition-all duration-200 focus-within:border-foreground/15 focus-within:shadow-[0_0_0_3px_rgba(0,0,0,0.03)]">
+    <form onSubmit={handleSubmit} className="w-full max-w-2xl mx-auto">
+      <div className="flex items-end gap-2 rounded-xl border border-border/30 bg-foreground/[0.02] px-4 py-3 transition-all duration-200 focus-within:border-foreground/20 focus-within:bg-foreground/[0.04]">
         <textarea
           ref={textareaRef}
           value={value}
@@ -38,22 +38,19 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
               handleSubmit(e);
             }
           }}
-          placeholder="Ask something…"
+          placeholder="Ask about regulations, FLDG caps, cooling off period..."
           rows={1}
           disabled={disabled}
-          className="flex-1 resize-none bg-transparent text-[13px] text-foreground placeholder:text-muted-foreground/40 outline-none min-h-[24px] max-h-[120px] leading-relaxed"
+          className="flex-1 resize-none bg-transparent text-[14px] text-foreground placeholder:text-foreground/30 outline-none min-h-[24px] max-h-[120px] leading-relaxed"
         />
         <button
           type="submit"
           disabled={!value.trim() || disabled}
-          className="shrink-0 h-7 w-7 rounded-lg bg-foreground text-background flex items-center justify-center transition-all duration-150 disabled:opacity-15 hover:opacity-80 active:scale-95"
+          className="shrink-0 h-8 w-8 rounded-lg bg-foreground text-background flex items-center justify-center transition-all duration-150 disabled:opacity-20 hover:opacity-80 active:scale-95"
         >
-          <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.5} />
+          <Send className="h-4 w-4" strokeWidth={2.5} />
         </button>
       </div>
-      <p className="text-center text-[10px] text-muted-foreground/35 mt-2.5">
-        Mock responses only — AI not connected
-      </p>
     </form>
   );
 }

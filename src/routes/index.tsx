@@ -4,7 +4,7 @@ import { ChatGroupBlock, type ChatMessageData, type ChatGroup, type ToolStepData
 import { ChatInput } from "@/components/chat/ChatInput";
 import { chatWithOllamaStream, type OllamaMessage } from "@/lib/ollama-stream";
 import { executeAllTools } from "@/lib/tools-client";
-import { Sparkles, Search, Check, FileText, Loader2 } from "lucide-react";
+import { Sparkles, Loader2 } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   component: ChatPage,
@@ -50,7 +50,7 @@ function ChatPage() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isThinking, activeTools, cursorThinking]);
+  }, [messages, isThinking, cursorThinking]);
 
   const handleSend = useCallback(async (text: string) => {
     const userMsg: ChatMessageData = {
@@ -66,34 +66,30 @@ function ChatPage() {
     setCursorThinking("");
 
     try {
-      // Cursor-like thinking: show what we're about to do
-      setCursorThinking(`Let me search for relevant rules about "${text}"...`);
+      // Cursor-style thinking
+      setCursorThinking(`Let me search for "${text}"`);
 
       // Execute tools
       const toolResults = await executeAllTools(text);
-      
-      // Show what we found
-      setCursorThinking(`Found ${toolResults.length} relevant rule(s). Let me analyze...`);
       setActiveTools(toolResults.map((t): ToolStepData => ({
         id: crypto.randomUUID(),
         toolName: t.toolName,
         status: t.status,
-        description: t.output.split("\n")[0].slice(0, 80),
+        description: t.output.split("\n")[0].slice(0, 100),
         detail: t.output,
         durationMs: t.durationMs,
       })));
 
-      // Clear the "thinking" text and start streaming
-      setCursorThinking("");
-      
-      // Build context from tool results
+      setCursorThinking(`Analyzing ${toolResults.length} result(s)...`);
+
+      // Build context
       const contextInfo = toolResults
         .filter(t => t.status === "completed")
         .map(t => `[${t.toolName}] ${t.output}`)
         .join("\n\n");
 
       const systemPrompt = contextInfo
-        ? `You are a regulatory compliance assistant. Use this reference data to answer accurately:\n\n${contextInfo}\n\nCite the source when applicable.`
+        ? `Reference: ${contextInfo}\n\nProvide a clear, structured answer citing sources.`
         : "";
 
       const currentHistory: OllamaMessage[] = messages
@@ -105,6 +101,9 @@ function ChatPage() {
       }
       currentHistory.push({ role: "user", content: text });
 
+      // Clear thinking
+      setCursorThinking("");
+      
       // Stream response
       let fullContent = "";
       for await (const chunk of chatWithOllamaStream(currentHistory)) {
@@ -127,7 +126,7 @@ function ChatPage() {
       const assistantMsg: ChatMessageData = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: `Error: ${error instanceof Error ? error.message : "Unknown error"}. Make sure Ollama is running.`,
+        content: `Error: ${error instanceof Error ? error.message : "Connection failed. Ensure Ollama is running on port 11434."}`,
         toolSteps: [{
           id: crypto.randomUUID(),
           toolName: "error",
@@ -145,86 +144,67 @@ function ChatPage() {
     }
   }, [messages]);
 
+  const isStreaming = streamingContent.length > 0;
+
   return (
     <div className="flex flex-col h-screen bg-background">
-      <header className="shrink-0 px-6 py-4 flex items-center gap-3">
-        <div className="h-7 w-7 rounded-lg bg-foreground/[0.06] flex items-center justify-center">
-          <Sparkles className="h-3.5 w-3.5 text-foreground/40" />
+      {/* Header */}
+      <header className="shrink-0 px-6 py-4 flex items-center gap-3 border-b border-border/20">
+        <div className="h-8 w-8 rounded-lg bg-foreground/[0.05] flex items-center justify-center">
+          <Sparkles className="h-4 w-4 text-foreground/40" />
         </div>
         <div>
-          <h1 className="text-[13px] font-semibold text-foreground tracking-tight leading-none">Agent Chat</h1>
-          <p className="text-[11px] text-muted-foreground/60 mt-0.5">Cursor-like AI Assistant</p>
+          <h1 className="text-[14px] font-semibold text-foreground">Agent Chat</h1>
+          <p className="text-[11px] text-foreground/40">AI-powered regulatory assistant</p>
         </div>
       </header>
 
-      <div className="h-px bg-border/40" />
-
+      {/* Main chat */}
       <main className="flex-1 overflow-y-auto">
-        <div className="max-w-[720px] mx-auto px-6 py-4">
+        <div className="max-w-2xl mx-auto px-6 py-6">
           {groups.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full py-20 text-center">
-              <Sparkles className="h-8 w-8 text-foreground/20 mb-4" />
-              <p className="text-[14px] text-foreground/60 mb-2">Start a conversation</p>
-              <p className="text-[12px] text-foreground/40">Ask about regulations, cooling off period, FLDG caps, etc.</p>
+            <div className="flex flex-col items-center justify-center h-[60vh] text-center">
+              <Sparkles className="h-12 w-12 text-foreground/10 mb-4" />
+              <p className="text-[15px] text-foreground/50 mb-2">Start a conversation</p>
+              <p className="text-[12px] text-foreground/30">Ask about regulations, FLDG caps, cooling off period, etc.</p>
             </div>
           ) : (
             groups.map((group, i) => (
               <div key={group.id}>
-                {i > 0 && <div className="h-px bg-border/30 my-2" />}
-                <ChatGroupBlock group={group} />
+                {i > 0 && <div className="h-px bg-border/10 my-2" />}
+                <ChatGroupBlock group={group} isStreaming={isStreaming && i === groups.length - 1} />
               </div>
             ))
           )}
           
+          {/* Thinking indicator */}
           {isThinking && (
             <>
-              <div className="h-px bg-border/30 my-2" />
+              <div className="h-px bg-border/10 my-2" />
               <div className="flex items-start gap-3 py-4">
-                <div className="shrink-0 h-7 w-7 rounded-full bg-foreground/[0.05] flex items-center justify-center">
-                  <Sparkles className="h-3.5 w-3.5 text-foreground/40" />
+                <div className="h-8 w-8 rounded-full bg-foreground/[0.05] flex items-center justify-center">
+                  <Loader2 className="h-4 w-4 text-foreground/40 animate-spin" />
                 </div>
                 <div className="flex-1">
-                  {/* Cursor-style thinking */}
                   {cursorThinking && (
-                    <div className="flex items-center gap-2 text-[12px] text-foreground/60 mb-3">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      <span>{cursorThinking}</span>
-                    </div>
-                  )}
-                  
-                  {/* Tool results inline */}
-                  {activeTools.length > 0 && (
-                    <div className="mb-3 p-3 rounded-lg border border-border/40 bg-foreground/[0.03]">
-                      <div className="flex items-center gap-2 mb-2">
-                        <FileText className="h-3 w-3 text-foreground/50" />
-                        <span className="text-[11px] text-foreground/60 font-medium">Search Results</span>
-                        <Check className="h-3 w-3 text-foreground/40 ml-auto" />
-                      </div>
-                      {activeTools.map((tool, i) => (
-                        <div key={i} className="text-[11px] text-foreground/70 font-mono leading-relaxed">
-                          {tool.description}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  
-                  {/* Streaming response */}
-                  {streamingContent && (
-                    <p className="text-[13px] text-foreground/85 leading-[1.7]">
-                      {streamingContent}
-                      <span className="inline-flex gap-0.5 ml-1 align-bottom">
-                        <span className="h-1.5 w-1.5 rounded-full bg-foreground/30 animate-bounce" />
-                        <span className="h-1.5 w-1.5 rounded-full bg-foreground/30 animate-bounce [animation-delay:0.15s]" />
-                        <span className="h-1.5 w-1.5 rounded-full bg-foreground/30 animate-bounce [animation-delay:0.3s]" />
-                      </span>
+                    <p className="text-[12px] text-foreground/40 mb-2">
+                      {cursorThinking}
                     </p>
                   )}
                   
-                  {!streamingContent && !cursorThinking && (
-                    <div className="flex items-center gap-2">
-                      <span className="h-1.5 w-1.5 rounded-full bg-foreground/20 animate-[pulse_1.4s_ease-in-out_infinite]" />
-                      <span className="h-1.5 w-1.5 rounded-full bg-foreground/20 animate-[pulse_1.4s_ease-in-out_0.2s_infinite]" />
-                      <span className="h-1.5 w-1.5 rounded-full bg-foreground/20 animate-[pulse_1.4s_ease-in-out_0.4s_infinite]" />
+                  {/* Tool results */}
+                  {activeTools.length > 0 && (
+                    <div className="rounded-lg border border-border/20 overflow-hidden mb-3">
+                      <div className="px-3 py-2 bg-foreground/[0.02] text-[11px] text-foreground/50">
+                        Found {activeTools.length} result{activeTools.length > 1 ? "s" : ""}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Streaming content */}
+                  {streamingContent && (
+                    <div className="text-[14px] text-foreground/70 leading-relaxed whitespace-pre-wrap">
+                      {streamingContent}
                     </div>
                   )}
                 </div>
@@ -235,8 +215,8 @@ function ChatPage() {
         </div>
       </main>
 
-      <div className="h-px bg-border/40" />
-      <footer className="shrink-0 px-6 py-4">
+      {/* Footer */}
+      <footer className="shrink-0 px-6 py-4 border-t border-border/20">
         <ChatInput onSend={handleSend} disabled={isThinking} />
       </footer>
     </div>
