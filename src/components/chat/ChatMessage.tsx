@@ -65,7 +65,7 @@ export function ToolAccordion({
     <div className="space-y-2">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="inline-flex max-w-full items-center gap-2 rounded-full border border-border/60 bg-muted/50 px-3 py-1.5 text-left hover:bg-muted/70 transition-colors"
+        className="w-full flex items-center gap-2 rounded-xl border border-border/60 bg-muted/50 px-3 py-2 text-left hover:bg-muted/70 transition-colors"
       >
         {isOpen ? (
           <ChevronDown className="h-3 w-3 text-foreground/50" />
@@ -76,11 +76,11 @@ export function ToolAccordion({
           {title ?? `Used ${toolSteps.length} tool${toolSteps.length > 1 ? "s" : ""}`}
         </span>
         {!title && (
-          <span className="text-[10px] text-foreground/45 font-mono truncate max-w-[220px]">
+          <span className="text-[10px] text-foreground/45 font-mono truncate">
             {toolSteps.map((t) => t.toolName).join(", ")}
           </span>
         )}
-        <span className="text-[10px] text-foreground/35">
+        <span className="text-[10px] text-foreground/35 ml-auto">
           {toolSteps.reduce((sum, t) => sum + (t.durationMs || 0), 0)}ms
         </span>
       </button>
@@ -137,27 +137,29 @@ function MarkdownContent({ content }: { content: string }) {
 export function ChatGroupBlock({ group, isStreaming = false }: { group: ChatGroup; isStreaming?: boolean }) {
   const hasReasoning = Boolean(group.assistantMessage?.reasoningSteps && group.assistantMessage.reasoningSteps.length > 0);
   const showReasoning = hasReasoning && group.assistantMessage?.toolSteps && group.assistantMessage.toolSteps.length > 0;
+  const showUserMessage = group.userMessage.content.trim().length > 0;
 
   return (
     <div className="animate-fade-in">
-      {/* User message */}
-      <div className="flex items-start gap-3 py-4">
-        <Avatar role="user" />
-        <div className="flex-1 min-w-0">
-          <p className="text-[14px] font-medium text-foreground leading-relaxed whitespace-pre-wrap">
-            {group.userMessage.content}
-          </p>
+      {showUserMessage && (
+        <div className="flex items-start gap-3 py-4">
+          <Avatar role="user" />
+          <div className="flex-1 min-w-0">
+            <p className="text-[14px] font-medium text-foreground leading-relaxed whitespace-pre-wrap">
+              {group.userMessage.content}
+            </p>
+          </div>
+          <span className="shrink-0 text-[10px] text-foreground/30 tabular-nums">
+            {group.userMessage.timestamp}
+          </span>
         </div>
-        <span className="shrink-0 text-[10px] text-foreground/30 tabular-nums">
-          {group.userMessage.timestamp}
-        </span>
-      </div>
+      )}
 
       {/* Assistant message */}
       {group.assistantMessage && (
         <div className="flex items-start gap-3 pb-4">
           <Avatar role="assistant" />
-          <div className="flex-1 min-w-0 space-y-2">
+          <div className="flex-1 min-w-0 space-y-2 rounded-2xl border border-border/40 bg-card/60 px-3 py-3">
             <ToolAccordion toolSteps={group.assistantMessage.thinkingSteps} title="Thinking" />
             <ToolAccordion toolSteps={group.assistantMessage.toolSteps} title="Tool discovery" />
             {showReasoning && <ToolAccordion toolSteps={group.assistantMessage.reasoningSteps} title="Reasoning" />}

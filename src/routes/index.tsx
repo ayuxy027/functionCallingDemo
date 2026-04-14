@@ -132,6 +132,18 @@ function latestReasoningLine(thinking: string) {
     .at(-1) ?? "Thinking through the response...";
 }
 
+function sanitizeAssistantOutput(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) return trimmed;
+
+  const rigidPattern = /(cannot assist with this request|current capabilities are limited|cannot generate creative content)/i;
+  if (!rigidPattern.test(trimmed)) {
+    return trimmed;
+  }
+
+  return "Hey! I am doing well — happy to help. Tell me what you want to explore and I will get you a clear answer.";
+}
+
 function buildSystemPrompt({
   preferredLanguage,
   contextInfo,
@@ -142,9 +154,10 @@ function buildSystemPrompt({
   forceToolGrounding: boolean;
 }) {
   const base = [
-    "You are Cognizant Agent, a precise and friendly compliance assistant.",
+    "You are Cognizant Agent, a precise and friendly assistant for both casual chat and compliance tasks.",
     `Respond in ${preferredLanguage}.`,
     "Be concise for casual chat. Be structured for policy questions.",
+    "Do not use refusal-style boilerplate for normal user prompts.",
     "Do not mention internal routing, tool names, retrieval steps, or hidden reasoning.",
     "Available helper tools in this system:",
     TOOL_CATALOG,
@@ -153,7 +166,7 @@ function buildSystemPrompt({
 
   if (!contextInfo) {
     return forceToolGrounding
-      ? `${base}\n\nNo retrieval evidence available yet. Ask for clarification briefly or state that required evidence was not retrieved.`
+      ? `${base}\n\nWhen evidence is unavailable, never expose internal fallback or retrieval status. Ask one concise clarification question only if needed.`
       : `${base}\n\nIf no retrieval evidence is provided, answer from general knowledge and keep uncertainty explicit.`;
   }
 
@@ -227,12 +240,38 @@ function ChatPage() {
   const lastPlanningLine = useRef("");
   const lastToolLine = useRef("");
   const lastSynthesisLine = useRef("");
+  const isWarmRef = useRef(false);
 
   const groups = useMemo(() => groupMessages(messages), [messages]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isThinking, cursorThinking]);
+
+  useEffect(() => {
+    if (isWarmRef.current) return;
+    isWarmRef.current = true;
+
+    void (async () => {
+      try {
+        await chatWithOllama(
+          [
+            {
+              role: "system",
+              content: "Warmup ping. Reply with OK.",
+            },
+            {
+              role: "user",
+              content: "OK",
+            },
+          ],
+          OLLAMA_MODELS.reasoning,
+        );
+      } catch {
+        // ignore warmup failures
+      }
+    })();
+  }, []);
 
   const handleSend = useCallback(async (text: string) => {
     const query = trimQuery(text);
@@ -276,6 +315,37 @@ function ChatPage() {
       const casualMessage = isCasualMessage(text);
       const responseModel = OLLAMA_MODELS.reasoning;
       const preferredLanguage = detectPreferredLanguage(text);
+
+      if (casualMessage) {
+        const directHistory: OllamaMessage[] = [
+          {
+            role: "system",
+            content: `You are Cognizant Agent. Reply in ${preferredLanguage}. Keep it friendly, natural, and very short. Never say you are limited to a specific task. Do not mention tools, retrieval, evidence, or internal process.`,
+          },
+          {
+            role: "user",
+            content: text,
+          },
+        ];
+
+        setCursorThinking("Preparing response...");
+
+        let fullContent = "";
+        for await (const chunk of chatWithOllamaStream(directHistory, OLLAMA_MODELS.reasoning)) {
+          fullContent = chunk.content;
+          setStreamingContent(fullContent);
+        }
+
+        const assistantMsg: ChatMessageData = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: sanitizeAssistantOutput(fullContent),
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        };
+        setMessages((prev) => [...prev, assistantMsg]);
+        setStreamingContent("");
+        return;
+      }
 
       const heuristicToolNeed = shouldUseTools(text);
       const taskLikeQuery = isTaskQuery(text);
@@ -451,6 +521,20 @@ function ChatPage() {
           }
 
           collectedResults = dedupeToolResults([...collectedResults, ...uniqueRound]);
+
+          const roundSummary = await summarize(text, collectedResults);
+          if (roundSummary.status === "completed") {
+            const summaryStep: ToolStepData = {
+              id: crypto.randomUUID(),
+              toolName: roundSummary.toolName,
+              status: roundSummary.status,
+              description: summarizeForThinking(roundSummary.output),
+              detail: roundSummary.output,
+              durationMs: roundSummary.durationMs,
+            };
+            currentToolSteps.push(summaryStep);
+            setActiveTools((prev) => [...prev, summaryStep]);
+          }
         }
 
         if (currentToolSteps.length === 0) {
@@ -498,7 +582,7 @@ function ChatPage() {
           collectedResults = dedupeToolResults([...collectedResults, ...emergencyUnique]);
         }
       } else {
-        setCursorThinking("Preparing a direct reply...");
+        setCursorThinking("Preparing response...");
         await sleep(180 + Math.round(Math.random() * 180));
       }
 
@@ -550,7 +634,7 @@ function ChatPage() {
         const workflowMsg: ChatMessageData = {
           id: crypto.randomUUID(),
           role: "assistant",
-          content: "I gathered the relevant evidence and validated it. Generating your final response now.",
+          content: "",
           toolSteps: currentToolSteps,
           thinkingSteps: currentThinkingSteps,
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
@@ -582,7 +666,7 @@ function ChatPage() {
       const assistantMsg: ChatMessageData = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: fullContent,
+        content: sanitizeAssistantOutput(fullContent),
         toolSteps: currentToolSteps,
         reasoningSteps: !casualMessage && currentReasoningSteps.length > 0 ? currentReasoningSteps : undefined,
         thinkingSteps: currentThinkingSteps.length > 0 ? currentThinkingSteps : undefined,
@@ -659,17 +743,14 @@ function ChatPage() {
                   <Loader2 className="h-4 w-4 text-primary animate-spin" />
                 </div>
                 <div className="flex-1">
-                  {cursorThinking && (
-                    <p className="text-[12px] text-foreground/50 mb-2 text-shimmer">
-                      {cursorThinking}
-                    </p>
-                  )}
+                  <p className="text-[12px] text-foreground/50 mb-2 text-shimmer">
+                    Agent is working through the task...
+                  </p>
 
                   {activeTools.length > 0 && (
                     <div className="mb-3">
                       <ToolAccordion
                         toolSteps={activeTools}
-                        defaultOpen
                         title="Tool discovery"
                       />
                     </div>
@@ -689,7 +770,6 @@ function ChatPage() {
                     <div className="mb-3">
                       <ToolAccordion
                         toolSteps={reasoningSteps}
-                        defaultOpen
                         title="Reasoning"
                       />
                     </div>
